@@ -47,8 +47,10 @@ def _accept_tos_is_unsupported(output: str) -> bool:
     option = r"['\"`]?--accept-tos['\"`]?"
     marker = r"(?:unknown|unexpected|unrecognized)"
     option_kind = r"(?:option|argument|flag)"
-    before_option = rf"{marker}\s+{option_kind}\s+{option}"
-    after_option = rf"{option}\s+(?:is\s+)?{marker}"
+    before_option = rf"{marker}\s+{option_kind}\s*:?[ \t]*{option}"
+    after_option = (
+        rf"{option}\s+is\s+(?:an?\s+)?{marker}\s+{option_kind}"
+    )
     return re.search(
         rf"(?:{before_option}|{after_option})", output, re.IGNORECASE
     ) is not None
@@ -208,8 +210,12 @@ class WarpService:
         if mode not in capabilities.modes:
             return OperationResult(False, f"Unsupported mode: {mode}", 2)
         previous = self.get_mode()
+        if not previous.ok or previous.value is None:
+            return OperationResult(
+                False, previous.output, previous.returncode
+            )
         changed = self._run(["mode", mode])
-        if changed.ok or not previous.ok or previous.value == mode:
+        if changed.ok or previous.value == mode:
             return _operation(changed)
         rollback = self._run(["mode", previous.value])
         return self._failed_change_with_rollback(changed, rollback)
@@ -232,8 +238,12 @@ class WarpService:
                 False, f"Unsupported protocol: {protocol}", 2
             )
         previous = self.get_protocol()
+        if not previous.ok or previous.value is None:
+            return OperationResult(
+                False, previous.output, previous.returncode
+            )
         changed = self._run(["tunnel", "protocol", "set", protocol])
-        if changed.ok or not previous.ok or previous.value == protocol:
+        if changed.ok or previous.value == protocol:
             return _operation(changed)
         rollback = self._run(
             ["tunnel", "protocol", "set", previous.value]

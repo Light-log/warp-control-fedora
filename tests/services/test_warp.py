@@ -57,9 +57,21 @@ def test_status_maps_command_failure_to_error_and_preserves_diagnostics():
     assert status.returncode == 7
 
 
-def test_accept_tos_retries_without_flag_only_for_specific_option_error():
+@pytest.mark.parametrize(
+    "diagnostic",
+    [
+        "unknown option --accept-tos",
+        "unrecognized argument '--accept-tos'",
+        "unexpected flag: --accept-tos",
+        "--accept-tos is an unknown option",
+        "--accept-tos is an unrecognized argument",
+    ],
+)
+def test_accept_tos_retries_without_flag_only_for_specific_option_error(
+    diagnostic,
+):
     runner = FakeRunner(
-        result(False, stderr="error: unexpected argument '--accept-tos'", returncode=2),
+        result(False, stderr=diagnostic, returncode=2),
         result(stdout="Connected"),
     )
 
@@ -80,6 +92,9 @@ def test_accept_tos_retries_without_flag_only_for_specific_option_error():
         "accept-tos is required before proceeding",
         "accept-tos: unknown mode",
         "accept-tos was accepted, but the requested mode is unknown",
+        "--accept-tos unexpected daemon failure",
+        "--accept-tos unknown mode",
+        "unexpected daemon failure near --accept-tos",
     ],
 )
 def test_accept_tos_does_not_retry_arbitrary_failures(diagnostic):
@@ -410,7 +425,7 @@ def test_failed_setter_rolls_back_known_different_value_and_keeps_original_failu
         ),
     ],
 )
-def test_failed_prior_query_still_mutates_but_cannot_rollback(
+def test_failed_prior_query_stops_before_mutation(
     setter, value, query_argv, mutation_argv
 ):
     runner = FakeRunner(
@@ -418,16 +433,16 @@ def test_failed_prior_query_still_mutates_but_cannot_rollback(
         result(stdout="Protocols: MASQUE WireGuard"),
         result(stdout="Commands: remove"),
         result(False, stderr="query failed", returncode=5),
-        result(False, stderr="change refused", returncode=6),
     )
     service = WarpService(runner, "warp-cli")
 
     operation = getattr(service, setter)(value)
 
     assert operation.ok is False
-    assert operation.returncode == 6
-    assert operation.output == "change refused"
-    assert [call[0] for call in runner.calls[-2:]] == [query_argv, mutation_argv]
+    assert operation.returncode == 5
+    assert operation.output == "query failed"
+    assert runner.calls[-1][0] == query_argv
+    assert mutation_argv not in [call[0] for call in runner.calls]
 
 
 def test_executable_resolver_is_supported_and_missing_path_is_typed_failure():
