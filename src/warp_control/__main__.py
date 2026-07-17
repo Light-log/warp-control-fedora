@@ -1,4 +1,4 @@
-def main():
+def main() -> int:
     from warp_control.app import main as app_main
 
     return app_main()
