@@ -44,10 +44,11 @@ def _advertised(output: str, known: Tuple[str, ...]) -> Tuple[str, ...]:
 
 
 def _accept_tos_is_unsupported(output: str) -> bool:
-    option = r"(?:--)?accept-tos"
+    option = r"['\"`]?--accept-tos['\"`]?"
     marker = r"(?:unknown|unexpected|unrecognized)"
-    before_option = rf"{marker}(?:\s+\w+){{0,3}}\s+['\"`]*{option}"
-    after_option = rf"{option}['\"`:]*\s+(?:is\s+)?{marker}"
+    option_kind = r"(?:option|argument|flag)"
+    before_option = rf"{marker}\s+{option_kind}\s+{option}"
+    after_option = rf"{option}\s+(?:is\s+)?{marker}"
     return re.search(
         rf"(?:{before_option}|{after_option})", output, re.IGNORECASE
     ) is not None
@@ -206,7 +207,12 @@ class WarpService:
         capabilities = self.capabilities()
         if mode not in capabilities.modes:
             return OperationResult(False, f"Unsupported mode: {mode}", 2)
-        return _operation(self._run(["mode", mode]))
+        previous = self.get_mode()
+        changed = self._run(["mode", mode])
+        if changed.ok or not previous.ok or previous.value == mode:
+            return _operation(changed)
+        rollback = self._run(["mode", previous.value])
+        return self._failed_change_with_rollback(changed, rollback)
 
     def get_protocol(self) -> ValueResult:
         command = self._run(["tunnel", "protocol", "get"])
@@ -225,6 +231,23 @@ class WarpService:
             return OperationResult(
                 False, f"Unsupported protocol: {protocol}", 2
             )
-        return _operation(
-            self._run(["tunnel", "protocol", "set", protocol])
+        previous = self.get_protocol()
+        changed = self._run(["tunnel", "protocol", "set", protocol])
+        if changed.ok or not previous.ok or previous.value == protocol:
+            return _operation(changed)
+        rollback = self._run(
+            ["tunnel", "protocol", "set", previous.value]
         )
+        return self._failed_change_with_rollback(changed, rollback)
+
+    @staticmethod
+    def _failed_change_with_rollback(
+        changed: CommandResult, rollback: CommandResult
+    ) -> OperationResult:
+        rollback_state = "succeeded" if rollback.ok else "failed"
+        rollback_output = rollback.combined_output or "no diagnostic output"
+        diagnostic = (
+            f"{changed.combined_output}\n"
+            f"Rollback {rollback_state}: {rollback_output}"
+        )
+        return OperationResult(False, diagnostic, changed.returncode)

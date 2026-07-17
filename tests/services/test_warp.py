@@ -78,6 +78,7 @@ def test_accept_tos_retries_without_flag_only_for_specific_option_error():
         "unknown mode supplied",
         "the daemon is unavailable",
         "accept-tos is required before proceeding",
+        "accept-tos: unknown mode",
         "accept-tos was accepted, but the requested mode is unknown",
     ],
 )
@@ -282,32 +283,151 @@ def test_set_protocol_rejects_wrong_case_before_mutating_command():
     assert len(runner.calls) == 3
 
 
-def test_set_mode_and_protocol_expose_cli_success_and_nonzero_failure():
+@pytest.mark.parametrize(
+    ("setter", "value", "current_output", "query_argv", "mutation_argv"),
+    [
+        (
+            "set_mode",
+            "proxy",
+            "Mode: warp",
+            ["warp-cli", "--accept-tos", "mode"],
+            ["warp-cli", "--accept-tos", "mode", "proxy"],
+        ),
+        (
+            "set_protocol",
+            "MASQUE",
+            "Protocol: WireGuard",
+            ["warp-cli", "--accept-tos", "tunnel", "protocol", "get"],
+            [
+                "warp-cli",
+                "--accept-tos",
+                "tunnel",
+                "protocol",
+                "set",
+                "MASQUE",
+            ],
+        ),
+    ],
+)
+def test_setter_captures_current_value_then_exposes_success(
+    setter, value, current_output, query_argv, mutation_argv
+):
     runner = FakeRunner(
         result(stdout="Modes: warp proxy"),
         result(stdout="Protocols: MASQUE WireGuard"),
         result(stdout="Commands: remove"),
-        result(stdout="mode changed"),
-        result(False, stderr="protocol refused", returncode=6),
+        result(stdout=current_output),
+        result(stdout="changed"),
     )
     service = WarpService(runner, "warp-cli")
 
-    mode = service.set_mode("proxy")
-    protocol = service.set_protocol("MASQUE")
+    operation = getattr(service, setter)(value)
 
-    assert mode.ok is True
-    assert protocol.ok is False
-    assert protocol.output == "protocol refused"
-    assert protocol.returncode == 6
-    assert runner.calls[-2][0] == ["warp-cli", "--accept-tos", "mode", "proxy"]
-    assert runner.calls[-1][0] == [
-        "warp-cli",
-        "--accept-tos",
-        "tunnel",
-        "protocol",
-        "set",
-        "MASQUE",
+    assert operation.ok is True
+    assert operation.output == "changed"
+    assert [call[0] for call in runner.calls[-2:]] == [query_argv, mutation_argv]
+
+
+@pytest.mark.parametrize(
+    ("setter", "value", "current_output", "mutation_argv", "rollback_argv"),
+    [
+        (
+            "set_mode",
+            "proxy",
+            "Mode: warp",
+            ["warp-cli", "--accept-tos", "mode", "proxy"],
+            ["warp-cli", "--accept-tos", "mode", "warp"],
+        ),
+        (
+            "set_protocol",
+            "MASQUE",
+            "Protocol: WireGuard",
+            [
+                "warp-cli",
+                "--accept-tos",
+                "tunnel",
+                "protocol",
+                "set",
+                "MASQUE",
+            ],
+            [
+                "warp-cli",
+                "--accept-tos",
+                "tunnel",
+                "protocol",
+                "set",
+                "WireGuard",
+            ],
+        ),
+    ],
+)
+def test_failed_setter_rolls_back_known_different_value_and_keeps_original_failure(
+    setter, value, current_output, mutation_argv, rollback_argv
+):
+    runner = FakeRunner(
+        result(stdout="Modes: warp proxy"),
+        result(stdout="Protocols: MASQUE WireGuard"),
+        result(stdout="Commands: remove"),
+        result(stdout=current_output),
+        result(False, stderr="change refused", returncode=6),
+        result(stdout="restored"),
+    )
+    service = WarpService(runner, "warp-cli")
+
+    operation = getattr(service, setter)(value)
+
+    assert operation.ok is False
+    assert operation.returncode == 6
+    assert "change refused" in operation.output
+    assert "restored" in operation.output
+    assert [call[0] for call in runner.calls[-2:]] == [
+        mutation_argv,
+        rollback_argv,
     ]
+
+
+@pytest.mark.parametrize(
+    ("setter", "value", "query_argv", "mutation_argv"),
+    [
+        (
+            "set_mode",
+            "proxy",
+            ["warp-cli", "--accept-tos", "mode"],
+            ["warp-cli", "--accept-tos", "mode", "proxy"],
+        ),
+        (
+            "set_protocol",
+            "MASQUE",
+            ["warp-cli", "--accept-tos", "tunnel", "protocol", "get"],
+            [
+                "warp-cli",
+                "--accept-tos",
+                "tunnel",
+                "protocol",
+                "set",
+                "MASQUE",
+            ],
+        ),
+    ],
+)
+def test_failed_prior_query_still_mutates_but_cannot_rollback(
+    setter, value, query_argv, mutation_argv
+):
+    runner = FakeRunner(
+        result(stdout="Modes: warp proxy"),
+        result(stdout="Protocols: MASQUE WireGuard"),
+        result(stdout="Commands: remove"),
+        result(False, stderr="query failed", returncode=5),
+        result(False, stderr="change refused", returncode=6),
+    )
+    service = WarpService(runner, "warp-cli")
+
+    operation = getattr(service, setter)(value)
+
+    assert operation.ok is False
+    assert operation.returncode == 6
+    assert operation.output == "change refused"
+    assert [call[0] for call in runner.calls[-2:]] == [query_argv, mutation_argv]
 
 
 def test_executable_resolver_is_supported_and_missing_path_is_typed_failure():
