@@ -3,7 +3,6 @@ import json
 import os
 import subprocess
 import sys
-import tomllib
 import types
 from pathlib import Path
 
@@ -242,14 +241,18 @@ def test_main_delegates_to_app_and_propagates_return_value(monkeypatch):
 
 def test_pyproject_declares_package_tooling_contract():
     pyproject_path = Path(__file__).parents[1] / "pyproject.toml"
-    with pyproject_path.open("rb") as pyproject_file:
-        pyproject = tomllib.load(pyproject_file)
+    pyproject = pyproject_path.read_text(encoding="utf-8")
 
-    assert pyproject["build-system"]["build-backend"] == "setuptools.build_meta"
-    assert pyproject["project"]["requires-python"] == ">=3.9"
+    def section(name):
+        marker = f"[{name}]\n"
+        assert marker in pyproject
+        return pyproject.split(marker, 1)[1].split("\n[", 1)[0]
+
+    assert 'build-backend = "setuptools.build_meta"' in section("build-system")
+    assert 'requires-python = ">=3.9"' in section("project")
     assert (
-        pyproject["project"]["scripts"]["warp-control"]
-        == "warp_control.__main__:main"
+        'warp-control = "warp_control.__main__:main"'
+        in section("project.scripts")
     )
-    assert pyproject["tool"]["pytest"]["ini_options"]["pythonpath"] == ["src"]
-    assert pyproject["tool"]["ruff"]["target-version"] == "py39"
+    assert 'pythonpath = ["src"]' in section("tool.pytest.ini_options")
+    assert 'target-version = "py39"' in section("tool.ruff")
