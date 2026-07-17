@@ -17,7 +17,7 @@ Decisiones principales:
 ## Estado de implementación (2026-07-17)
 
 - Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-- Tasks 1–7 terminadas y aprobadas mediante revisión de especificación y calidad.
+- Tasks 1–10 terminadas y aprobadas mediante revisión de especificación y calidad.
 - Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
 - Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
 - `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
@@ -27,5 +27,8 @@ Decisiones principales:
 - StatusNotifierItem adquiere el nombre D-Bus antes de registrarse, abre panel/menú y degrada a AyatanaAppIndicator sin fugas.
 - El controlador serializa mutaciones WARP, descarta snapshots obsoletos, hace rollback de configuración y evita procesos ocultos sin bandeja.
 - Logs rotativos solo guardan metadatos; `--smoke-test` funciona sin pantalla, D-Bus ni `warp-cli`.
-- Verificación actual: 196 pruebas aprobadas localmente (203 con display en revisión), Ruff limpio y wheel con SVG empaquetados validado.
-- Siguiente tarea: Task 8, detección multidistro y planes de instalación.
+- La detección fail-closed cubre la matriz oficial Cloudflare 2026 para RPM/APT; Arch solo ofrece instrucciones.
+- El helper PolicyKit fija el fingerprint Cloudflare, restringe origen de paquetes, acota procesos/JSONL y suspende polling durante el flujo inicial.
+- El instalador heredado ahora es un wrapper de siete líneas; el bootstrap usa snapshots con SHA-256 y la migración crea backups recuperables.
+- Verificación actual: 367 pruebas aprobadas, Ruff limpio, scripts validados y wheel con SVG empaquetados validado.
+- Siguiente tarea: Task 11, RPM de referencia.
