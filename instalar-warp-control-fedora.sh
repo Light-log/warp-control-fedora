@@ -40,9 +40,13 @@ error() { printf "${c_red}[ERROR]${c_off} %s\n" "$*" >&2; }
 
 cleanup_error() {
     error "La instalación se detuvo en la línea $1."
+    if [[ -n "${2:-}" ]]; then
+        error "Comando que falló: $2"
+    fi
     error "Revisa los mensajes anteriores y vuelve a ejecutar el archivo."
+    error "Si el fallo fue de permisos, ejecútalo desde una terminal: bash $(basename "$0")"
 }
-trap 'cleanup_error $LINENO' ERR
+trap 'cleanup_error "$LINENO" "$BASH_COMMAND"' ERR
 
 if [[ "${EUID}" -eq 0 ]]; then
     error "No ejecutes este archivo directamente como root."
@@ -71,6 +75,101 @@ if [[ ! -r /etc/os-release ]]; then
     exit 1
 fi
 
+# --------------------------------------------------------------------------- #
+#  Permisos: si se ejecutó con doble clic (sin terminal), pedir la contraseña
+#  con un diálogo gráfico —como cualquier app— y luego mostrar el progreso en
+#  una terminal. Sin esto, `sudo` no puede leer la contraseña y el script
+#  moriría en silencio ("no pasa nada").
+# --------------------------------------------------------------------------- #
+GUI_MODE=0
+[[ ! -t 0 || ! -t 1 ]] && GUI_MODE=1
+
+pick_askpass() {
+    # Ayudante gráfico de contraseña, según el escritorio disponible
+    local candidates=(
+        "${SUDO_ASKPASS:-}"
+        /usr/bin/ksshaskpass                       # KDE
+        /usr/libexec/openssh/gnome-ssh-askpass     # GNOME
+        /usr/bin/lxqt-openssh-askpass              # LXQt
+        /usr/bin/ssh-askpass
+    )
+    local c
+    for c in "${candidates[@]}"; do
+        [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
+    done
+    # Respaldo universal: generar un askpass con zenity
+    if command -v zenity >/dev/null 2>&1; then
+        local helper="${TMPDIR:-/tmp}/warp-control-askpass.sh"
+        cat > "$helper" <<'ASKPASS'
+#!/usr/bin/env bash
+zenity --password --title="WARP Control" \
+       --text="Se requieren permisos de administrador para instalar Cloudflare WARP" 2>/dev/null
+ASKPASS
+        chmod 700 "$helper"
+        printf '%s' "$helper"
+        return 0
+    fi
+    return 1
+}
+
+SUDO="sudo"
+if (( GUI_MODE )); then
+    if ASKPASS_BIN="$(pick_askpass)"; then
+        export SUDO_ASKPASS="$ASKPASS_BIN"
+        SUDO="sudo -A"
+    fi
+fi
+
+if (( GUI_MODE )) && [[ -z "${WARP_CONTROL_RELAUNCHED:-}" ]]; then
+    SELF="$(readlink -f "$0")"
+
+    # 1) Pedir la contraseña con el diálogo gráfico, antes de abrir nada
+    if [[ -n "${SUDO_ASKPASS:-}" ]]; then
+        if ! sudo -A -v; then
+            if command -v zenity >/dev/null 2>&1; then
+                zenity --error --no-wrap --title="WARP Control" \
+                       --text="No se pudo obtener permisos de administrador.\nInstalación cancelada." 2>/dev/null
+            fi
+            exit 1
+        fi
+        # Mantener vivos los permisos mientras dura la instalación
+        ( while sudo -n -v 2>/dev/null; do sleep 30; done ) &
+        SUDO_KEEPALIVE=$!
+        export SUDO_KEEPALIVE
+    fi
+
+    # 2) Ya autorizados: mostrar el progreso en una terminal
+    export WARP_CONTROL_RELAUNCHED=1
+    INNER="bash '$SELF' ${*:-}; echo; echo 'Pulsa Intro para cerrar…'; read -r"
+    for term in ptyxis kgx gnome-terminal konsole xfce4-terminal tilix mate-terminal xterm; do
+        command -v "$term" >/dev/null 2>&1 || continue
+        case "$term" in
+            konsole|xterm)   exec "$term" -e bash -c "$INNER" ;;
+            *)               exec "$term" -- bash -c "$INNER" ;;
+        esac
+    done
+
+    # 3) Sin terminal: instalar en segundo plano informando por diálogos
+    if command -v zenity >/dev/null 2>&1; then
+        ( bash "$SELF" > "${TMPDIR:-/tmp}/warp-control-install.log" 2>&1 ) &
+        INSTALL_PID=$!
+        zenity --progress --pulsate --auto-close --no-cancel \
+               --title="WARP Control" --text="Instalando…" 2>/dev/null &
+        ZEN_PID=$!
+        wait "$INSTALL_PID"; RC=$?
+        kill "$ZEN_PID" 2>/dev/null || true
+        if (( RC == 0 )); then
+            zenity --info --no-wrap --title="WARP Control" \
+                   --text="Instalación completada.\nAbre «WARP Control» desde el menú." 2>/dev/null
+        else
+            zenity --error --no-wrap --title="WARP Control" \
+                   --text="La instalación falló.\nDetalles: ${TMPDIR:-/tmp}/warp-control-install.log" 2>/dev/null
+        fi
+        exit "$RC"
+    fi
+    exit 1
+fi
+
 # shellcheck disable=SC1091
 source /etc/os-release
 if [[ "${ID:-}" != "fedora" && "${ID_LIKE:-}" != *"fedora"* ]]; then
@@ -79,11 +178,18 @@ if [[ "${ID:-}" != "fedora" && "${ID_LIKE:-}" != *"fedora"* ]]; then
     [[ "$answer" =~ ^[sS]$ ]] || exit 1
 fi
 
+# Al terminar, detener el proceso que mantiene vivos los permisos
+cleanup_keepalive() {
+    [[ -n "${SUDO_KEEPALIVE:-}" ]] && kill "$SUDO_KEEPALIVE" 2>/dev/null || true
+    rm -f "${TMPDIR:-/tmp}/warp-control-askpass.sh" 2>/dev/null || true
+}
+trap cleanup_keepalive EXIT
+
 info "Solicitando permisos administrativos para instalar dependencias…"
-sudo -v
+$SUDO -v
 
 info "Instalando dependencias gráficas…"
-sudo dnf install -y \
+$SUDO dnf install -y \
     curl \
     python3 \
     python3-gobject \
@@ -97,12 +203,12 @@ ok "Dependencias instaladas."
 
 if ! command -v warp-cli >/dev/null 2>&1; then
     info "Cloudflare WARP no está instalado. Añadiendo el repositorio oficial…"
-    sudo curl -fsSL \
+    $SUDO curl -fsSL \
         https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo \
         -o /etc/yum.repos.d/cloudflare-warp.repo
 
     info "Instalando el paquete cloudflare-warp…"
-    if ! sudo dnf install -y cloudflare-warp; then
+    if ! $SUDO dnf install -y cloudflare-warp; then
         error "Fedora no pudo instalar cloudflare-warp desde el repositorio oficial."
         error "Comprueba que tu arquitectura tenga un paquete compatible en pkg.cloudflareclient.com."
         exit 1
@@ -112,7 +218,7 @@ else
 fi
 
 info "Activando el servicio de WARP…"
-sudo systemctl enable --now warp-svc
+$SUDO systemctl enable --now warp-svc
 
 warp_cmd() {
     # Archivo temporal privado por invocación (evita symlink/race en /tmp).
