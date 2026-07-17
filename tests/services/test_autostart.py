@@ -1,3 +1,4 @@
+import configparser
 import os
 from pathlib import Path
 
@@ -25,6 +26,23 @@ def service(tmp_path, **kwargs):
         exec_path="/usr/bin/warp-control",
         **kwargs,
     )
+
+
+def test_installed_desktop_entry_has_exact_required_metadata():
+    desktop_path = Path(__file__).parents[2] / "data" / "com.robler.warpcontrol.desktop"
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    parser.optionxform = str
+    parser.read_string(desktop_path.read_text(encoding="utf-8"))
+
+    assert parser.sections() == ["Desktop Entry"]
+    assert dict(parser["Desktop Entry"]) == {
+        "Type": "Application",
+        "Name": "WARP Control",
+        "Exec": "/usr/bin/warp-control",
+        "Icon": "com.robler.warpcontrol",
+        "Categories": "Network;Utility;",
+        "StartupNotify": "false",
+    }
 
 
 def test_default_path_prefers_xdg_config_home(tmp_path, monkeypatch):
