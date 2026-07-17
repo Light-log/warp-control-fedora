@@ -29,10 +29,19 @@ def test_main_window_uses_one_top_level_stack_and_same_window_for_modify():
     assert window.get_child() is window.stack
     assert window.stack.get_child_by_name("compact") is window.compact_panel
     assert window.stack.get_child_by_name("configuration") is window.configuration
+    assert window.stack.get_visible_child_name() == "compact"
 
     window.compact_panel.modify_button.clicked()
-
     assert window.stack.get_visible_child_name() == "configuration"
+    window.show_compact()
+    assert window.stack.get_visible_child_name() == "compact"
+
+    window.show_all()
+    window.show_configuration()
+    assert window.stack.get_visible_child_name() == "configuration"
+    window.show_compact()
+    assert window.stack.get_visible_child_name() == "compact"
+
     assert len([widget for widget in Gtk.Window.list_toplevels() if widget is window]) == 1
     window.destroy()
 

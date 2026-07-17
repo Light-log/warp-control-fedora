@@ -59,6 +59,9 @@ class MainWindow(Gtk.Window):
             self.notebook.append_page(page, Gtk.Label(label=title))
         self.configuration.pack_start(self.notebook, True, True, 0)
 
+        # Gtk.Stack refuses to select a child whose visible flag is still false.
+        # Prepare both internal views now while leaving the top-level window hidden.
+        self.stack.show_all()
         self.show_compact()
         self.apply_config(config)
         self.apply_state(WarpState.UNKNOWN)
