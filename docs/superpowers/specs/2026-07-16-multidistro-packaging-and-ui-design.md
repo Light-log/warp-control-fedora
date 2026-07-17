@@ -82,8 +82,11 @@ GUI-Cloudflare/
 │   └── com.robler.warpcontrol.policy
 ├── packaging/
 │   ├── rpm/warp-control.spec
-│   ├── debian/
 │   └── arch/PKGBUILD
+├── debian/
+│   ├── control
+│   ├── rules
+│   └── source/format
 ├── scripts/
 │   ├── install.sh
 │   └── migrate-legacy.sh
@@ -169,7 +172,7 @@ Al iniciar:
 3. Si falta, aparece un diálogo con «Instalar ahora», «Ver instrucciones» y «Ahora no».
 4. «Instalar ahora» resume los cambios y requiere una segunda confirmación.
 5. PolicyKit autentica la acción privilegiada.
-6. Un helper instalado en `/usr/libexec/warp-control/` ejecuta una de un conjunto cerrado de acciones.
+6. Helpers de propósito único instalados en `/usr/libexec/warp-control/` ejecutan instalación o reinicio sin aceptar argumentos.
 7. La UI muestra las etapas, captura errores y permite reintentar.
 
 El helper no aceptará comandos arbitrarios. Validará `/etc/os-release`, arquitectura, versión soportada y URLs oficiales antes de modificar el sistema.
@@ -221,7 +224,8 @@ Después de instalar, la aplicación ejecutará `warp-cli registration show`. Si
 ### Arch
 
 - PKGBUILD para WARP Control únicamente.
-- `cloudflare-warp` figurará como dependencia opcional/documentada, no como paquete oficial.
+- La necesidad de `warp-cli` se documentará, pero no se declarará un paquete AUR como dependencia.
+- El paquete experimental no instalará helpers PolicyKit; mostrará instrucciones y comprobará `warp-cli`.
 - Validación con `namcap`.
 
 ## 11. Instalador opcional
@@ -312,4 +316,3 @@ El RPM será el artefacto de referencia del portafolio. DEB y PKGBUILD demostrar
 - La cabecera sigue correctamente el tema claro u oscuro.
 - Las pruebas y validadores de los tres formatos terminan correctamente.
 - La configuración existente se conserva durante la migración.
-

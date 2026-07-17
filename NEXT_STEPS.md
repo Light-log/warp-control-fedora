@@ -1,6 +1,5 @@
 # Próximos pasos
 
-1. Esperar la revisión y aprobación del usuario sobre la especificación de diseño.
-2. Tras la aprobación, leer la skill `writing-plans` y producir un plan de implementación detallado.
-3. No modificar todavía la aplicación ni el instalador existente.
-
+1. La especificación fue aprobada por el usuario.
+2. Revisar y ejecutar `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
+3. Usar subagentes con propietarios de archivos no solapados y revisión entre tareas.
