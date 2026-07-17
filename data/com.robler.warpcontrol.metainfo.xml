@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.robler.warpcontrol</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>WARP Control</name>
+  <summary>Control Cloudflare WARP from the Linux desktop</summary>
+  <description>
+    <p>
+      WARP Control is a graphical control panel for Cloudflare WARP. It shows the
+      connection state, manages split-tunnel exclusions, and provides customizable
+      status colors from one compact GTK window.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.robler.warpcontrol.desktop</launchable>
+  <provides>
+    <binary>warp-control</binary>
+  </provides>
+  <url type="homepage">https://github.com/robler/warp-control</url>
+  <developer id="com.robler">
+    <name>Carlos David Isturiz</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="2.0.0" date="2026-07-17">
+      <description>
+        <p>First native multi-distribution release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
+
