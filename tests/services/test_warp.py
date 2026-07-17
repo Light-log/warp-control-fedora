@@ -57,6 +57,37 @@ def test_status_maps_command_failure_to_error_and_preserves_diagnostics():
     assert status.returncode == 7
 
 
+def test_status_uses_stdout_field_and_ignores_conflicting_stderr_diagnostic():
+    runner = FakeRunner(
+        result(
+            stdout="Status: Connected\n",
+            stderr="warning: previously disconnected\n",
+        )
+    )
+
+    status = WarpService(runner, "warp-cli").status()
+
+    assert status.state is WarpState.CONNECTED
+    assert "previously disconnected" in status.output
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "Connected to daemon, but no status field",
+        "Last Status: Connected",
+        "Status: Connected with MASQUE",
+        "No status available",
+    ],
+)
+def test_status_does_not_infer_state_from_noisy_stdout(stdout):
+    runner = FakeRunner(result(stdout=stdout))
+
+    status = WarpService(runner, "warp-cli").status()
+
+    assert status.state is WarpState.UNKNOWN
+
+
 @pytest.mark.parametrize(
     "diagnostic",
     [
@@ -72,7 +103,7 @@ def test_accept_tos_retries_without_flag_only_for_specific_option_error(
 ):
     runner = FakeRunner(
         result(False, stderr=diagnostic, returncode=2),
-        result(stdout="Connected"),
+        result(stdout="Status: Connected"),
     )
 
     status = WarpService(runner, "warp-cli").status()
@@ -158,7 +189,18 @@ def test_host_add_uses_current_add_verb():
     ]
 
 
-@pytest.mark.parametrize(("help_text", "verb"), [("add remove list", "remove"), ("add delete list", "delete")])
+@pytest.mark.parametrize(
+    ("help_text", "verb"),
+    [
+        ("  add HOST\n  remove HOST  Remove an excluded host\n  list", "remove"),
+        ("delete  Remove an excluded host", "delete"),
+        (
+            "delete  Legacy removal command\nremove  Remove an excluded host",
+            "remove",
+        ),
+        ("Use delete to remove an excluded host", "remove"),
+    ],
+)
 def test_host_remove_uses_verb_advertised_by_installed_help(help_text, verb):
     runner = FakeRunner(result(stdout=help_text), result())
     service = WarpService(runner, "warp-cli")
@@ -248,6 +290,43 @@ def test_capabilities_preserve_probe_failure_and_do_not_invent_values():
     assert capabilities.host_remove_verb == "remove"
     assert "mode help failed" in capabilities.output
     assert "host help failed" in capabilities.output
+    assert "mode probe [returncode=8]" in capabilities.output
+    assert "protocol probe [returncode=0]" in capabilities.output
+    assert "host probe [returncode=9]" in capabilities.output
+
+
+def test_transient_capability_failure_is_not_cached_and_next_probe_recovers():
+    runner = FakeRunner(
+        result(False, stderr="temporary mode failure", returncode=8),
+        result(stdout="Protocols: MASQUE"),
+        result(stdout="delete  Remove an excluded host"),
+        result(stdout="Modes: warp proxy"),
+        result(stdout="Protocols: MASQUE WireGuard"),
+        result(stdout="remove  Remove an excluded host"),
+    )
+    service = WarpService(runner, "warp-cli")
+
+    failed = service.capabilities()
+    recovered = service.capabilities()
+    cached = service.capabilities()
+
+    assert failed.ok is False
+    assert failed.modes == ()
+    assert failed.host_remove_verb == "delete"
+    assert recovered.ok is True
+    assert recovered.modes == ("warp", "proxy")
+    assert recovered.protocols == ("MASQUE", "WireGuard")
+    assert recovered.host_remove_verb == "remove"
+    assert cached is recovered
+    assert len(runner.calls) == 6
+    assert [call[0][-2:] for call in runner.calls] == [
+        ["mode", "--help"],
+        ["protocol", "--help"],
+        ["host", "--help"],
+        ["mode", "--help"],
+        ["protocol", "--help"],
+        ["host", "--help"],
+    ]
 
 
 def test_get_mode_and_protocol_parse_only_supported_values():
@@ -446,7 +525,7 @@ def test_failed_prior_query_stops_before_mutation(
 
 
 def test_executable_resolver_is_supported_and_missing_path_is_typed_failure():
-    runner = FakeRunner(result(stdout="Connected"))
+    runner = FakeRunner(result(stdout="Status: Connected"))
     service = WarpService(runner, lambda: "/usr/local/bin/warp-cli")
 
     assert service.status().state is WarpState.CONNECTED

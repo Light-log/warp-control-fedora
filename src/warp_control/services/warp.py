@@ -26,6 +26,11 @@ _KNOWN_MODES = (
 )
 _KNOWN_PROTOCOLS = ("MASQUE", "WireGuard")
 _Executable = Union[str, Callable[[], Optional[str]]]
+_STATUS_LINE = re.compile(
+    r"^\s*Status(?:\s+update)?\s*:\s*"
+    r"(Connected|Connecting|Reconnecting|Disconnected)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _operation(command: CommandResult) -> OperationResult:
@@ -54,6 +59,11 @@ def _accept_tos_is_unsupported(output: str) -> bool:
     return re.search(
         rf"(?:{before_option}|{after_option})", output, re.IGNORECASE
     ) is not None
+
+
+def _probe_diagnostic(label: str, command: CommandResult) -> str:
+    output = command.combined_output or "no diagnostic output"
+    return f"{label} probe [returncode={command.returncode}]: {output}"
 
 
 class WarpService:
@@ -102,15 +112,15 @@ class WarpService:
         if not command.ok:
             state = WarpState.ERROR
         else:
-            lowered = output.lower()
-            if "disconnected" in lowered:
-                state = WarpState.DISCONNECTED
-            elif "reconnecting" in lowered or "connecting" in lowered:
-                state = WarpState.CONNECTING
-            elif "connected" in lowered:
-                state = WarpState.CONNECTED
-            else:
-                state = WarpState.UNKNOWN
+            matches = tuple(_STATUS_LINE.finditer(command.stdout))
+            status_token = matches[-1].group(1).lower() if matches else ""
+            states = {
+                "connected": WarpState.CONNECTED,
+                "connecting": WarpState.CONNECTING,
+                "reconnecting": WarpState.CONNECTING,
+                "disconnected": WarpState.DISCONNECTED,
+            }
+            state = states.get(status_token, WarpState.UNKNOWN)
         return WarpStatus(command.ok, output, command.returncode, state)
 
     def connect(self) -> OperationResult:
@@ -134,8 +144,18 @@ class WarpService:
 
     def _probe_host_remove_verb(self) -> Tuple[str, CommandResult]:
         command = self._run(["tunnel", "host", "--help"])
-        advertised = set(re.findall(r"[A-Za-z_]+", command.combined_output.lower()))
-        verb = "delete" if "delete" in advertised and "remove" not in advertised else "remove"
+        help_output = command.stdout if command.ok else ""
+        advertised = set(
+            re.findall(
+                r"^\s*(remove|delete)\b",
+                help_output,
+                re.IGNORECASE | re.MULTILINE,
+            )
+        )
+        advertised = {verb.lower() for verb in advertised}
+        verb = "remove" if "remove" in advertised else (
+            "delete" if "delete" in advertised else "remove"
+        )
         return verb, command
 
     def remove_host(self, rule: str) -> OperationResult:
@@ -171,15 +191,20 @@ class WarpService:
     def capabilities(self, refresh: bool = False) -> WarpCapabilities:
         if self._capabilities is not None and not refresh:
             return self._capabilities
+        if refresh:
+            self._capabilities = None
 
         mode_help = self._run(["mode", "--help"])
         protocol_help = self._run(["tunnel", "protocol", "--help"])
         host_verb, host_help = self._probe_host_remove_verb()
         probes = (mode_help, protocol_help, host_help)
         diagnostics = tuple(
-            probe.combined_output for probe in probes if probe.combined_output
+            _probe_diagnostic(label, probe)
+            for label, probe in zip(
+                ("mode", "protocol", "host"), probes
+            )
         )
-        self._capabilities = WarpCapabilities(
+        capabilities = WarpCapabilities(
             ok=all(probe.ok for probe in probes),
             modes=_advertised(mode_help.combined_output, _KNOWN_MODES)
             if mode_help.ok
@@ -192,7 +217,9 @@ class WarpService:
             host_remove_verb=host_verb,
             output="\n".join(diagnostics),
         )
-        return self._capabilities
+        if capabilities.ok:
+            self._capabilities = capabilities
+        return capabilities
 
     def get_mode(self) -> ValueResult:
         command = self._run(["mode"])
