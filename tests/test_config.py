@@ -3,6 +3,8 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
+import types
 from pathlib import Path
 
 import pytest
@@ -37,6 +39,15 @@ def test_load_uses_xdg_config_home_by_default(tmp_path, monkeypatch):
 
     assert config.path == expected
     assert config.theme == "light"
+
+
+def test_load_uses_home_config_directory_when_xdg_is_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    config = Config.load()
+
+    assert config.path == tmp_path / ".config" / "warp-control" / "config.json"
 
 
 def test_schema_less_config_is_migrated_without_losing_valid_values(tmp_path):
@@ -208,3 +219,37 @@ def test_main_module_import_is_lazy(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", reject_app_import)
 
     __import__("warp_control.__main__")
+
+
+def test_main_delegates_to_app_and_propagates_return_value(monkeypatch):
+    import warp_control.__main__ as entry_point
+
+    calls = []
+
+    def fake_main():
+        calls.append("called")
+        return 23
+
+    fake_app = types.ModuleType("warp_control.app")
+    fake_app.main = fake_main
+    monkeypatch.setitem(sys.modules, "warp_control.app", fake_app)
+
+    result = entry_point.main()
+
+    assert calls == ["called"]
+    assert result == 23
+
+
+def test_pyproject_declares_package_tooling_contract():
+    pyproject_path = Path(__file__).parents[1] / "pyproject.toml"
+    with pyproject_path.open("rb") as pyproject_file:
+        pyproject = tomllib.load(pyproject_file)
+
+    assert pyproject["build-system"]["build-backend"] == "setuptools.build_meta"
+    assert pyproject["project"]["requires-python"] == ">=3.9"
+    assert (
+        pyproject["project"]["scripts"]["warp-control"]
+        == "warp_control.__main__:main"
+    )
+    assert pyproject["tool"]["pytest"]["ini_options"]["pythonpath"] == ["src"]
+    assert pyproject["tool"]["ruff"]["target-version"] == "py39"
