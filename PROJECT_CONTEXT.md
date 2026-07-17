@@ -14,12 +14,15 @@ Decisiones principales:
 - Colores de estado para el icono; color de acento para acciones y navegación.
 - Cabecera integrada con el tema y pestañas de tamaño fijo.
 
-## Estado de implementación (2026-07-16)
+## Estado de implementación (2026-07-17)
 
 - Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-- Tasks 1 y 2 terminadas y aprobadas mediante revisión de especificación y calidad.
+- Tasks 1–5 terminadas y aprobadas mediante revisión de especificación y calidad.
 - Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
 - Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
 - `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
-- Verificación actual: 61 pruebas aprobadas y Ruff limpio.
-- Siguiente tarea: Task 3, servicio `WarpService` y detección de capacidades.
+- `WarpService` detecta capacidades de versiones nuevas y heredadas, aplica cambios con rollback seguro y nunca construye shell.
+- Iconos Cloudflare de dos colores y autostart XDG se generan de forma atómica con rutas validadas.
+- La ventana GTK única incluye panel compacto y tabs Exclusiones/Apariencia/Ajustes; conserva modo/protocolo, limpia proveedores CSS y carga SVG empaquetados.
+- Verificación actual: 148 pruebas aprobadas (más pruebas GTK reales en revisión), Ruff limpio y wheel con ambos SVG validado.
+- Siguiente tarea: Task 6, StatusNotifierItem y fallback AyatanaAppIndicator.
