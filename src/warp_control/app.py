@@ -5,10 +5,11 @@ import logging
 import os
 import sys
 import tempfile
+from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Deque, Optional, Sequence, Tuple
 
 from warp_control.config import Config
 from warp_control.domains import expand_host_rule
@@ -48,6 +49,7 @@ class ApplicationController:
         tray: Any,
         logger: Optional[logging.Logger] = None,
         quit_mainloop: Callable[[], None] = lambda: None,
+        fallback_icon_path: Optional[Path] = None,
     ) -> None:
         self.config = config
         self.warp = warp
@@ -66,6 +68,15 @@ class ApplicationController:
         self._mode: Optional[str] = None
         self._protocol: Optional[str] = None
         self._autostart_synchronized = False
+        self._fallback_icon_path = (
+            Path(fallback_icon_path) if fallback_icon_path is not None else None
+        )
+        self._tray_available = False
+        self._generation = 0
+        self._refresh_generation = 0
+        self._refresh_pending = False
+        self._operation_active = False
+        self._operation_queue: Deque[Tuple[Callable[[], Any], Callable[[Any], None], Callable[[Exception], None]]] = deque()
 
     def ui_actions(self) -> UIActions:
         return UIActions(
@@ -89,15 +100,15 @@ class ApplicationController:
     def start(self, *, background: bool = False) -> None:
         self._sync_initial_autostart()
         self.window.apply_config(self.config)
-        initial_icon = self._render_icon(WarpState.UNKNOWN)
+        initial_icon = self._render_icon(WarpState.UNKNOWN) or self._fallback_icon_path
         if initial_icon is not None:
             self.window.apply_state(WarpState.UNKNOWN, initial_icon)
-            self.tray.start(initial_icon)
+            self._start_or_update_tray(initial_icon)
         else:
             self.window.apply_state(WarpState.UNKNOWN)
         self._reschedule()
         self.refresh()
-        if not background:
+        if not background or not self._tray_available:
             self.show_panel()
 
     def _sync_initial_autostart(self) -> None:
@@ -114,16 +125,27 @@ class ApplicationController:
             except (OSError, ValueError):
                 pass
             self.config.autostart_enabled = actual
-            self.config.save()
+            try:
+                self.config.save()
+            except (OSError, ValueError) as save_error:
+                self.logger.error(
+                    "autostart state persistence failed error_type=%s",
+                    type(save_error).__name__,
+                )
             self.logger.error(
                 "autostart synchronization failed error_type=%s",
                 type(error).__name__,
             )
 
     def refresh(self) -> bool:
-        if self._shutdown or self.refreshing:
+        if self._shutdown:
             return False
+        if self.refreshing or self._operation_active or self._operation_queue:
+            self._refresh_pending = True
+            return False
+        self._refresh_pending = False
         self.refreshing = True
+        self._refresh_generation = self._generation
 
         def collect() -> RefreshSnapshot:
             status = self.warp.status()
@@ -139,25 +161,36 @@ class ApplicationController:
                 protocol_result.value if protocol_result.ok else None,
             )
 
-        self.tasks.submit(collect, self._refresh_complete, self._refresh_failed)
+        generation = self._refresh_generation
+        self.tasks.submit(
+            collect,
+            lambda snapshot: self._refresh_complete(snapshot, generation),
+            lambda error: self._refresh_failed(error, generation),
+        )
         return True
 
-    def _refresh_complete(self, snapshot: RefreshSnapshot) -> None:
+    def _refresh_complete(
+        self, snapshot: RefreshSnapshot, generation: int
+    ) -> None:
         self.refreshing = False
-        if not self._shutdown:
+        if not self._shutdown and generation == self._generation:
             self._apply_snapshot(snapshot)
+        elif not self._shutdown:
+            self._refresh_pending = True
+        self._continue_work()
 
-    def _refresh_failed(self, error: Exception) -> None:
+    def _refresh_failed(self, error: Exception, generation: int) -> None:
         self.refreshing = False
         self.logger.error(
             "refresh failed error_type=%s", type(error).__name__
         )
-        if not self._shutdown:
+        if not self._shutdown and generation == self._generation:
             self._state = WarpState.ERROR
             icon = self._render_icon(WarpState.ERROR)
             self.window.apply_state(WarpState.ERROR, icon)
             if icon is not None:
-                self.tray.update_icon(icon)
+                self._start_or_update_tray(icon)
+        self._continue_work()
 
     def _apply_snapshot(self, snapshot: RefreshSnapshot) -> None:
         self._state = snapshot.status.state
@@ -174,7 +207,7 @@ class ApplicationController:
         )
         self.window.apply_connection_settings(self._mode, self._protocol)
         if icon is not None:
-            self.tray.update_icon(icon)
+            self._start_or_update_tray(icon)
         self.logger.info(
             "refresh state=%s status_rc=%s hosts_rc=%s capabilities_ok=%s",
             self._state.value,
@@ -184,12 +217,14 @@ class ApplicationController:
         )
 
     def toggle_connection(self) -> None:
+        if self._state is WarpState.CONNECTING:
+            return
         disconnect = self._state is WarpState.CONNECTED
         self._state = WarpState.CONNECTING
         icon = self._render_icon(WarpState.CONNECTING)
         self.window.apply_state(WarpState.CONNECTING, icon)
         if icon is not None:
-            self.tray.update_icon(icon)
+            self._start_or_update_tray(icon)
         operation = self.warp.disconnect if disconnect else self.warp.connect
         self._submit_operation(operation, refresh=True)
 
@@ -248,7 +283,7 @@ class ApplicationController:
             )
             self._operation_failed(error)
 
-        self.tasks.submit(worker, complete, failed)
+        self._enqueue_mutation(worker, complete, failed)
 
     def set_protocol(self, protocol: str) -> None:
         previous = {"mode": self._mode, "protocol": self._protocol}
@@ -287,26 +322,81 @@ class ApplicationController:
             )
             self._operation_failed(error)
 
-        self.tasks.submit(worker, complete, failed)
+        self._enqueue_mutation(worker, complete, failed)
 
     def restart_service(self) -> None:
         self._submit_operation(self.diagnostics.restart_service, refresh=True)
 
     def check_connectivity(self) -> None:
-        self._submit_operation(self.diagnostics.check_connectivity)
+        self._submit_operation(
+            self.diagnostics.check_connectivity, serialized=False
+        )
 
     def open_log(self) -> None:
-        self._submit_operation(self.diagnostics.open_log)
+        self._submit_operation(self.diagnostics.open_log, serialized=False)
 
     def _submit_operation(
-        self, worker: Callable[[], OperationResult], *, refresh: bool = False
+        self,
+        worker: Callable[[], OperationResult],
+        *,
+        refresh: bool = False,
+        serialized: bool = True,
     ) -> None:
         def complete(result: OperationResult) -> None:
             self._log_result("operation", result)
             if refresh:
                 self.refresh()
 
-        self.tasks.submit(worker, complete, self._operation_failed)
+        if serialized:
+            self._enqueue_mutation(worker, complete, self._operation_failed)
+        else:
+            self.tasks.submit(worker, complete, self._operation_failed)
+
+    def _enqueue_mutation(
+        self,
+        worker: Callable[[], Any],
+        on_success: Callable[[Any], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
+        if self._shutdown:
+            return
+        self._generation += 1
+        self._operation_queue.append((worker, on_success, on_error))
+        self._pump_operations()
+
+    def _pump_operations(self) -> None:
+        if (
+            self._shutdown
+            or self.refreshing
+            or self._operation_active
+            or not self._operation_queue
+        ):
+            return
+        worker, on_success, on_error = self._operation_queue.popleft()
+        self._operation_active = True
+
+        def success(result: Any) -> None:
+            self._operation_active = False
+            if not self._shutdown:
+                on_success(result)
+            self._continue_work()
+
+        def failure(error: Exception) -> None:
+            self._operation_active = False
+            if not self._shutdown:
+                on_error(error)
+            self._continue_work()
+
+        self.tasks.submit(worker, success, failure)
+
+    def _continue_work(self) -> None:
+        if self._shutdown:
+            return
+        if self._operation_queue:
+            self._pump_operations()
+        elif not self._operation_active and not self.refreshing and self._refresh_pending:
+            self._refresh_pending = False
+            self.refresh()
 
     def _operation_failed(self, error: Exception) -> None:
         self.logger.error(
@@ -326,20 +416,24 @@ class ApplicationController:
     def set_theme(self, theme: str) -> None:
         if theme not in {"light", "dark"}:
             return
+        previous = deepcopy(self.config)
         self.config.theme = theme
-        self._save_and_apply(render_icons=False)
+        self._save_and_apply(previous, render_icons=False)
 
     def set_accent(self, accent: str) -> None:
+        previous = deepcopy(self.config)
         self.config.accent = accent
-        self._save_and_apply(render_icons=False)
+        self._save_and_apply(previous, render_icons=False)
 
     def set_state_color(self, state: str, role: str, color: str) -> None:
         if state not in self.config.colors or role not in {"primary", "secondary"}:
             return
+        previous = deepcopy(self.config)
         self.config.colors[state][role] = color
-        self._save_and_apply(render_icons=True)
+        self._save_and_apply(previous, render_icons=True)
 
     def reset_appearance(self) -> None:
+        previous = deepcopy(self.config)
         autostart = self.config.autostart_enabled
         auto_update = self.config.auto_update_enabled
         interval = self.config.update_interval_seconds
@@ -350,9 +444,10 @@ class ApplicationController:
         self.config.autostart_enabled = autostart
         self.config.auto_update_enabled = auto_update
         self.config.update_interval_seconds = interval
-        self._save_and_apply(render_icons=True)
+        self._save_and_apply(previous, render_icons=True)
 
     def set_autostart(self, enabled: bool) -> None:
+        previous = deepcopy(self.config)
         try:
             self.autostart.enable() if enabled else self.autostart.disable()
         except (OSError, ValueError) as error:
@@ -362,28 +457,72 @@ class ApplicationController:
             self.window.apply_config(self.config)
             return
         self.config.autostart_enabled = bool(enabled)
-        self._save_and_apply(render_icons=False)
+        if not self._save_and_apply(previous, render_icons=False):
+            try:
+                if previous.autostart_enabled:
+                    self.autostart.enable()
+                else:
+                    self.autostart.disable()
+            except (OSError, ValueError) as error:
+                self.logger.error(
+                    "autostart rollback failed error_type=%s",
+                    type(error).__name__,
+                )
 
     def set_auto_update(self, enabled: bool) -> None:
+        previous = deepcopy(self.config)
         self.config.auto_update_enabled = bool(enabled)
-        self._save_and_apply(render_icons=False)
-        self._reschedule()
+        if self._save_and_apply(previous, render_icons=False):
+            self._reschedule()
 
     def set_update_interval(self, interval: int) -> None:
         if isinstance(interval, bool) or interval <= 0:
             return
+        previous = deepcopy(self.config)
         self.config.update_interval_seconds = interval
-        self._save_and_apply(render_icons=False)
-        self._reschedule()
+        if self._save_and_apply(previous, render_icons=False):
+            self._reschedule()
 
-    def _save_and_apply(self, *, render_icons: bool) -> None:
-        self.config.save()
+    def _save_and_apply(self, previous: Config, *, render_icons: bool) -> bool:
+        try:
+            self.config.save()
+        except (OSError, ValueError) as error:
+            self._restore_config(previous)
+            self.window.apply_config(self.config)
+            self.logger.error(
+                "config persistence failed error_type=%s",
+                type(error).__name__,
+            )
+            return False
         self.window.apply_config(self.config)
         if render_icons:
             icon = self._render_icon(self._state)
             if icon is not None:
                 self.window.apply_state(self._state, icon)
-                self.tray.update_icon(icon)
+                self._start_or_update_tray(icon)
+        return True
+
+    def _restore_config(self, previous: Config) -> None:
+        self.config.schema_version = previous.schema_version
+        self.config.theme = previous.theme
+        self.config.accent = previous.accent
+        self.config.colors = deepcopy(previous.colors)
+        self.config.autostart_enabled = previous.autostart_enabled
+        self.config.auto_update_enabled = previous.auto_update_enabled
+        self.config.update_interval_seconds = previous.update_interval_seconds
+
+    def _start_or_update_tray(self, icon: Path) -> bool:
+        try:
+            if self._tray_available:
+                self._tray_available = self.tray.update_icon(icon) is not False
+            if not self._tray_available:
+                self._tray_available = self.tray.start(icon) is not False
+        except Exception as error:
+            self._tray_available = False
+            self.logger.error(
+                "tray operation failed error_type=%s", type(error).__name__
+            )
+        return self._tray_available
 
     def _render_icon(self, state: WarpState) -> Optional[Path]:
         try:
@@ -420,6 +559,8 @@ class ApplicationController:
         if self._shutdown:
             return
         self._shutdown = True
+        self._refresh_pending = False
+        self._operation_queue.clear()
         self.scheduler.stop()
         self.tray.close()
 
@@ -483,6 +624,7 @@ def _build_runtime(config: Config):
         tray=tray,
         logger=logger,
         quit_mainloop=Gtk.main_quit,
+        fallback_icon_path=runtime_asset_path("cloudflare-fallback.svg"),
     )
     holder["controller"] = controller
     return controller, Gtk

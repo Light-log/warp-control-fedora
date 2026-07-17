@@ -54,6 +54,7 @@ class FakeWindow:
         self.connection_settings = []
         self.configs = []
         self.visible = False
+        self.compact_shown = 0
 
     def apply_state(self, state, icon_path=None):
         self.states.append((state, icon_path))
@@ -81,6 +82,9 @@ class FakeWindow:
 
     def present(self):
         self.visible = True
+
+    def show_compact(self):
+        self.compact_shown += 1
 
 
 class FakeWarp:
@@ -142,9 +146,12 @@ class FakeIcons:
     def __init__(self, tmp_path):
         self.tmp_path = tmp_path
         self.calls = []
+        self.fail = False
 
     def render(self, state, config):
         self.calls.append((state, config.accent))
+        if self.fail:
+            raise OSError("icon unavailable")
         return self.tmp_path / f"{state.value}.svg"
 
 
@@ -153,14 +160,16 @@ class FakeTray:
         self.started = []
         self.updated = []
         self.closed = 0
+        self.start_result = True
+        self.update_result = True
 
     def start(self, path):
         self.started.append(Path(path))
-        return True
+        return self.start_result
 
     def update_icon(self, path):
         self.updated.append(Path(path))
-        return True
+        return self.update_result
 
     def close(self):
         self.closed += 1
@@ -214,6 +223,7 @@ def make_controller(tmp_path):
         scheduler=scheduler,
         window=window,
         tray=tray,
+        fallback_icon_path=tmp_path / "fallback.svg",
     )
     return controller, config, tasks, scheduler, window, warp, tray
 
@@ -228,8 +238,19 @@ def test_refresh_is_exclusive_and_applies_one_coherent_snapshot(tmp_path):
     assert len(tasks.pending) == 1
     tasks.complete_next()
 
+    assert controller.refreshing is True
+    assert len(tasks.pending) == 1
+    tasks.complete_next()
+
     assert controller.refreshing is False
-    assert warp.calls == ["status", "hosts", "capabilities"]
+    assert warp.calls == [
+        "status",
+        "hosts",
+        "capabilities",
+        "status",
+        "hosts",
+        "capabilities",
+    ]
     assert window.states[-1][0] is WarpState.CONNECTED
     assert window.hosts[-1] == ("example.com",)
     assert window.capabilities[-1][1:] == ("warp", "MASQUE")
@@ -450,3 +471,113 @@ def test_controller_logs_only_structured_result_metadata(tmp_path):
     assert "device-id-42" not in serialized
     assert "private" not in serialized
     assert "returncode" in serialized
+
+
+def test_warp_mutations_are_serial_and_periodic_refresh_is_coalesced(tmp_path):
+    controller, _config, tasks, scheduler, _window, warp, _tray = make_controller(
+        tmp_path
+    )
+
+    controller.set_mode("doh")
+    controller.set_protocol("MASQUE")
+    controller.toggle_connection()
+    controller._reschedule()
+    scheduler.started[-1][0]()
+
+    assert len(tasks.pending) == 1
+    tasks.complete_next()
+    assert warp.calls[-1] == ("mode", "doh")
+    assert len(tasks.pending) == 1
+    tasks.complete_next()
+    assert warp.calls[-1] == ("protocol", "MASQUE")
+    assert len(tasks.pending) == 1
+    tasks.complete_next()
+    assert warp.calls[-1] == "connect"
+    assert len(tasks.pending) == 1  # one coalesced refresh, never one per action
+    tasks.complete_next()
+    assert tasks.pending == []
+
+
+def test_snapshot_started_before_mutation_is_discarded_then_refreshed(tmp_path):
+    controller, _config, tasks, _scheduler, window, _warp, _tray = make_controller(
+        tmp_path
+    )
+
+    assert controller.refresh()
+    controller.set_mode("doh")
+    assert len(tasks.pending) == 1
+
+    tasks.complete_next()  # stale read completes; mutation starts next
+    assert window.states == []
+    assert len(tasks.pending) == 1
+    tasks.complete_next()  # mutation completes; fresh read starts
+    assert window.states == []
+    assert len(tasks.pending) == 1
+    tasks.complete_next()
+    assert window.states[-1][0] is WarpState.CONNECTED
+
+
+def test_config_save_failure_rolls_back_memory_window_and_scheduler(tmp_path):
+    controller, config, _tasks, scheduler, window, *_rest = make_controller(
+        tmp_path
+    )
+    controller._reschedule()
+    starts_before = list(scheduler.started)
+    stops_before = scheduler.stops
+    config.save = lambda: (_ for _ in ()).throw(OSError("secret.example/id"))
+
+    controller.set_theme("light")
+    controller.set_auto_update(False)
+    controller.set_update_interval(99)
+
+    assert config.theme == "dark"
+    assert config.auto_update_enabled is True
+    assert config.update_interval_seconds == 5
+    assert window.configs[-1].update_interval_seconds == 5
+    assert scheduler.started == starts_before
+    assert scheduler.stops == stops_before
+
+
+def test_autostart_side_effect_is_rolled_back_when_config_save_fails(tmp_path):
+    controller, config, _tasks, _scheduler, window, *_rest = make_controller(
+        tmp_path
+    )
+    config.autostart_enabled = False
+    config.save = lambda: (_ for _ in ()).throw(OSError("cannot save"))
+
+    controller.set_autostart(True)
+
+    assert controller.autostart.calls == ["enable", "disable"]
+    assert controller.autostart.enabled is False
+    assert config.autostart_enabled is False
+    assert window.configs[-1].autostart_enabled is False
+
+
+def test_background_start_uses_fallback_icon_and_recovers_tray_later(tmp_path):
+    controller, _config, tasks, _scheduler, window, _warp, tray = make_controller(
+        tmp_path
+    )
+    controller.icons.fail = True
+    tray.start_result = False
+
+    controller.start(background=True)
+    assert tray.started[-1].name == "fallback.svg"
+    assert window.visible is True  # no usable tray means the app cannot stay hidden
+
+    tray.start_result = True
+    controller.icons.fail = False
+    tasks.complete_next()
+    assert tray.started[-1].name == "connected.svg"
+    assert controller._tray_available is True
+
+
+def test_background_start_can_stay_hidden_with_packaged_fallback(tmp_path):
+    controller, _config, _tasks, _scheduler, window, _warp, tray = make_controller(
+        tmp_path
+    )
+    controller.icons.fail = True
+
+    controller.start(background=True)
+
+    assert tray.started[-1].name == "fallback.svg"
+    assert window.visible is False
