@@ -1,4 +1,4 @@
-from .detector import Architecture, SystemInfo
+from .detector import Architecture, Distribution, SystemInfo
 from .models import InstallAction, InstallPlan
 
 
@@ -12,6 +12,12 @@ _OFFICIAL_ACTIONS = (
 
 
 def rhel_plan(system: SystemInfo) -> InstallPlan:
+    if system.distribution is not Distribution.RHEL:
+        return InstallPlan(
+            False,
+            "El plan de RHEL recibió otra distribución; no se realizará ninguna acción.",
+            (),
+        )
     major_version = system.version.split(".", 1)[0] if system.version else ""
     if (
         system.architecture in (Architecture.AMD64, Architecture.ARM64)

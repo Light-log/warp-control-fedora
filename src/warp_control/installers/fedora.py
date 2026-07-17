@@ -1,4 +1,4 @@
-from .detector import Architecture, SystemInfo
+from .detector import Architecture, Distribution, SystemInfo
 from .models import InstallAction, InstallPlan
 
 
@@ -12,6 +12,12 @@ _OFFICIAL_ACTIONS = (
 
 
 def fedora_plan(system: SystemInfo) -> InstallPlan:
+    if system.distribution is not Distribution.FEDORA:
+        return InstallPlan(
+            False,
+            "El plan de Fedora recibió otra distribución; no se realizará ninguna acción.",
+            (),
+        )
     if (
         system.architecture in (Architecture.AMD64, Architecture.ARM64)
         and system.version in _SUPPORTED_VERSIONS

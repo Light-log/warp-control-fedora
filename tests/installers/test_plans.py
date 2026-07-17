@@ -3,8 +3,11 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from warp_control.installers import installation_plan
+from warp_control.installers.debian import debian_plan
 from warp_control.installers.detector import Architecture, Distribution, SystemInfo
+from warp_control.installers.fedora import fedora_plan
 from warp_control.installers.models import InstallAction, OfficialSource
+from warp_control.installers.rhel import rhel_plan
 
 
 PRIVILEGED_ACTIONS = {
@@ -123,3 +126,62 @@ def test_upstream_sources_are_a_closed_allowlist():
         "https://pkg.cloudflareclient.com/pubkey.gpg",
         "https://pkg.cloudflareclient.com/",
     }
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        system(Distribution.UNKNOWN, "44"),
+        system(Distribution.RHEL, "44"),
+        system(Distribution.MANJARO, "44"),
+    ],
+)
+def test_fedora_planner_rejects_valid_version_from_other_distribution(candidate):
+    plan = fedora_plan(candidate)
+
+    assert plan.supported is False
+    assert plan.actions == ()
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        system(Distribution.UNKNOWN, "13", "trixie"),
+        system(Distribution.FEDORA, "13", "trixie"),
+        system(Distribution.MANJARO, "13", "trixie"),
+    ],
+)
+def test_debian_planner_rejects_valid_debian_release_from_other_distribution(candidate):
+    plan = debian_plan(candidate)
+
+    assert plan.supported is False
+    assert plan.actions == ()
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        system(Distribution.DEBIAN, "24.04", "noble"),
+        system(Distribution.UBUNTU, "13", "trixie"),
+    ],
+)
+def test_debian_planner_does_not_mix_ubuntu_and_debian_release_maps(candidate):
+    plan = debian_plan(candidate)
+
+    assert plan.supported is False
+    assert plan.actions == (InstallAction.SHOW_MANUAL_INSTRUCTIONS,)
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        system(Distribution.UNKNOWN, "10"),
+        system(Distribution.FEDORA, "10"),
+        system(Distribution.ENDEAVOUROS, "10"),
+    ],
+)
+def test_rhel_planner_rejects_valid_version_from_other_distribution(candidate):
+    plan = rhel_plan(candidate)
+
+    assert plan.supported is False
+    assert plan.actions == ()

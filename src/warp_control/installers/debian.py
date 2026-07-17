@@ -17,7 +17,16 @@ _OFFICIAL_ACTIONS = (
 
 
 def debian_plan(system: SystemInfo) -> InstallPlan:
-    releases = _UBUNTU_RELEASES if system.distribution is Distribution.UBUNTU else _DEBIAN_RELEASES
+    if system.distribution is Distribution.UBUNTU:
+        releases = _UBUNTU_RELEASES
+    elif system.distribution is Distribution.DEBIAN:
+        releases = _DEBIAN_RELEASES
+    else:
+        return InstallPlan(
+            False,
+            "El plan APT recibió otra distribución; no se realizará ninguna acción.",
+            (),
+        )
     supported_release = system.version in releases and releases[system.version] == system.codename
     if (
         system.architecture in (Architecture.AMD64, Architecture.ARM64)
