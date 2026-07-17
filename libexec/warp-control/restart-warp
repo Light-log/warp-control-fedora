@@ -1,0 +1,4 @@
+#!/usr/bin/python3
+from warp_control.privileged.helper import restart_main
+
+raise SystemExit(restart_main())

@@ -1,0 +1,4 @@
+#!/usr/bin/python3
+from warp_control.privileged.helper import install_main
+
+raise SystemExit(install_main())

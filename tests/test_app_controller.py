@@ -228,6 +228,25 @@ def make_controller(tmp_path):
     return controller, config, tasks, scheduler, window, warp, tray
 
 
+def test_active_first_launch_installer_defers_warp_refresh(tmp_path):
+    controller, _config, tasks, _scheduler, _window, _warp, _tray = make_controller(tmp_path)
+
+    class InstallFlow:
+        def __init__(self):
+            self.calls = 0
+
+        def start(self):
+            self.calls += 1
+            return True
+
+    flow = InstallFlow()
+    controller.install_flow = flow
+    controller.start(background=True)
+
+    assert flow.calls == 1
+    assert tasks.pending == []
+
+
 def test_refresh_is_exclusive_and_applies_one_coherent_snapshot(tmp_path):
     controller, _config, tasks, _scheduler, window, warp, tray = make_controller(
         tmp_path

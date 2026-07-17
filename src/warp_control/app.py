@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import shutil
 import sys
 import tempfile
 from collections import deque
@@ -50,6 +51,7 @@ class ApplicationController:
         logger: Optional[logging.Logger] = None,
         quit_mainloop: Callable[[], None] = lambda: None,
         fallback_icon_path: Optional[Path] = None,
+        install_flow: Any = None,
     ) -> None:
         self.config = config
         self.warp = warp
@@ -76,6 +78,7 @@ class ApplicationController:
         self._refresh_generation = 0
         self._refresh_pending = False
         self._operation_active = False
+        self.install_flow = install_flow
         self._operation_queue: Deque[Tuple[Callable[[], Any], Callable[[Any], None], Callable[[Exception], None]]] = deque()
 
     def ui_actions(self) -> UIActions:
@@ -107,7 +110,9 @@ class ApplicationController:
         else:
             self.window.apply_state(WarpState.UNKNOWN)
         self._reschedule()
-        self.refresh()
+        installation_active = bool(self.install_flow and self.install_flow.start())
+        if not installation_active:
+            self.refresh()
         if not background or not self._tray_available:
             self.show_panel()
 
@@ -610,15 +615,17 @@ def _build_runtime(config: Config):
             lambda: holder["controller"].quit(),
         )
     )
+    tasks = BackgroundTasks(GLib.idle_add)
+    warp = WarpService(runner)
     controller = ApplicationController(
         config=config,
-        warp=WarpService(runner),
+        warp=warp,
         icons=IconRenderer(
             runtime_asset_path("cloudflare-template.svg"), _cache_dir()
         ),
         autostart=AutostartService(),
         diagnostics=DiagnosticsService(runner),
-        tasks=BackgroundTasks(GLib.idle_add),
+        tasks=tasks,
         scheduler=PeriodicScheduler(GLib.timeout_add_seconds, GLib.source_remove),
         window=window,
         tray=tray,
@@ -627,6 +634,20 @@ def _build_runtime(config: Config):
         fallback_icon_path=runtime_asset_path("cloudflare-fallback.svg"),
     )
     holder["controller"] = controller
+    if shutil.which("warp-cli") is None:
+        from warp_control.installers import installation_plan
+        from warp_control.installers.detector import detect_system
+        from warp_control.ui.install_dialog import GtkInstallationFlow, InstallPresenter
+
+        system = detect_system()
+        controller.install_flow = GtkInstallationFlow(
+            parent=window,
+            presenter=InstallPresenter(system, installation_plan(system)),
+            tasks=tasks,
+            idle_add=GLib.idle_add,
+            warp=warp,
+            on_complete=controller.refresh,
+        )
     return controller, Gtk
 
 
