@@ -2,7 +2,8 @@
 
 # ruff: noqa: E402 -- gi.require_version must precede repository imports.
 
-from typing import Iterable
+from pathlib import Path
+from typing import Iterable, Optional, Union
 
 import gi
 
@@ -17,7 +18,7 @@ from warp_control.ui.compact_panel import CompactPanel
 from warp_control.ui.exclusions import ExclusionsPage
 from warp_control.ui.presenters import CONFIG_WIDTH, UIActions, present_state
 from warp_control.ui.settings import SettingsPage
-from warp_control.ui.theme import build_css
+from warp_control.ui.theme import ScreenProviderBinding, build_css
 
 
 class MainWindow(Gtk.Window):
@@ -28,6 +29,10 @@ class MainWindow(Gtk.Window):
         self.set_default_size(CONFIG_WIDTH, 570)
         self.set_resizable(False)
         self.connect("delete-event", self._on_delete_event)
+        self._css_provider = Gtk.CssProvider()
+        self._provider_binding = ScreenProviderBinding(
+            self._css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -94,10 +99,14 @@ class MainWindow(Gtk.Window):
         self.show_configuration()
         self.notebook.set_current_page(2)
 
-    def apply_state(self, state: WarpState) -> None:
+    def apply_state(
+        self, state: WarpState, icon_path: Optional[Union[Path, str]] = None
+    ) -> None:
         self.state = state
         presentation = present_state(state)
         self.compact_panel.apply_state(state)
+        if icon_path is not None:
+            self.set_state_icon(icon_path)
         self.hero_state_label.set_text(presentation.status_label)
         self.apply_theme(self.config)
 
@@ -108,14 +117,18 @@ class MainWindow(Gtk.Window):
         self.apply_theme(config)
 
     def apply_theme(self, config: Config) -> None:
-        provider = Gtk.CssProvider()
-        provider.load_from_data(build_css(config, self.state).encode("utf-8"))
+        self._css_provider.load_from_data(
+            build_css(config, self.state).encode("utf-8")
+        )
         screen = Gdk.Screen.get_default()
-        if screen is not None:
-            Gtk.StyleContext.add_provider_for_screen(
-                screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-            )
-        self._css_provider = provider
+        self._provider_binding.install(
+            screen,
+            Gtk.StyleContext.add_provider_for_screen,
+            Gtk.StyleContext.remove_provider_for_screen,
+        )
+
+    def set_state_icon(self, path: Union[Path, str]) -> None:
+        self.compact_panel.set_icon(path)
 
     def set_hosts(self, hosts: Iterable[str]) -> None:
         self.exclusions.set_hosts(hosts)

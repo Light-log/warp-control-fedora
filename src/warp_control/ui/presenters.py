@@ -1,13 +1,28 @@
 """Pure UI presentation models and callback contracts."""
 
+import os
 from dataclasses import dataclass
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Union
 
 from warp_control.models import WarpState
 
 
 CONFIG_WIDTH = 420
 CONFIG_CONTENT_HEIGHT = 390
+MODE_LABELS = {
+    "warp": "WARP con DNS UDP",
+    "warp+doh": "WARP + DoH",
+    "warp+dot": "WARP + DoT",
+    "doh": "Solo DoH",
+    "dot": "Solo DoT",
+    "tunnel_only": "Solo tráfico",
+    "proxy": "Proxy local",
+}
+
+
+def normalize_icon_path(path: Union[Path, str]) -> str:
+    return os.fspath(path)
 
 
 def _noop(*args: object) -> None:

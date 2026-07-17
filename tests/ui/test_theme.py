@@ -1,6 +1,12 @@
 from warp_control.config import Config
 from warp_control.models import WarpState
-from warp_control.ui.theme import DARK_PALETTE, LIGHT_PALETTE, build_css, palette_for
+from warp_control.ui.theme import (
+    DARK_PALETTE,
+    LIGHT_PALETTE,
+    ScreenProviderBinding,
+    build_css,
+    palette_for,
+)
 
 
 def test_light_and_dark_palettes_have_approved_integrated_headers():
@@ -32,3 +38,28 @@ def test_state_primary_and_accent_have_separate_css_roles():
     assert "#6750A4" in css
     assert "#DC2626" in css
 
+
+def test_css_provider_binding_installs_once_and_moves_between_screens():
+    provider = object()
+    first_screen = object()
+    second_screen = object()
+    calls = []
+    binding = ScreenProviderBinding(provider, 600)
+
+    binding.install(
+        first_screen,
+        lambda screen, item, priority: calls.append(("add", screen, item, priority)),
+        lambda screen, item: calls.append(("remove", screen, item)),
+    )
+    binding.install(first_screen, lambda *_args: calls.append(("duplicate",)), lambda *_args: None)
+    binding.install(
+        second_screen,
+        lambda screen, item, priority: calls.append(("add", screen, item, priority)),
+        lambda screen, item: calls.append(("remove", screen, item)),
+    )
+
+    assert calls == [
+        ("add", first_screen, provider, 600),
+        ("remove", first_screen, provider),
+        ("add", second_screen, provider, 600),
+    ]

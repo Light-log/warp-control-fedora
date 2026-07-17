@@ -3,12 +3,14 @@
 # ruff: noqa: E402 -- gi.require_version must precede repository imports.
 
 import gi
+from pathlib import Path
+from typing import Union
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
 from warp_control.models import WarpState
-from warp_control.ui.presenters import UIActions, present_state
+from warp_control.ui.presenters import UIActions, normalize_icon_path, present_state
 
 
 class CompactPanel(Gtk.Box):
@@ -20,11 +22,11 @@ class CompactPanel(Gtk.Box):
         self.cloudflare_icon = Gtk.Image.new_from_icon_name(
             "cloudflare-warp", Gtk.IconSize.DIALOG
         )
-        self.cloudflare_icon.set_widget_name("cloudflare-icon")
+        self.cloudflare_icon.set_name("cloudflare-icon")
         self.pack_start(self.cloudflare_icon, False, False, 0)
 
         self.state_label = Gtk.Label()
-        self.state_label.set_widget_name("compact-state-label")
+        self.state_label.set_name("compact-state-label")
         self.state_label.get_style_context().add_class("state-badge")
         self.pack_start(self.state_label, False, False, 0)
 
@@ -46,3 +48,6 @@ class CompactPanel(Gtk.Box):
         self.state_label.set_text(presentation.status_label)
         self.action_button.set_label(presentation.action_label)
         self.action_button.set_sensitive(presentation.action_sensitive)
+
+    def set_icon(self, path: Union[Path, str]) -> None:
+        self.cloudflare_icon.set_from_file(normalize_icon_path(path))

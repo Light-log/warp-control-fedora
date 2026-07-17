@@ -1,8 +1,12 @@
 from warp_control.models import WarpState
+from pathlib import Path
+
 from warp_control.ui.presenters import (
     CONFIG_CONTENT_HEIGHT,
     CONFIG_WIDTH,
+    MODE_LABELS,
     UIActions,
+    normalize_icon_path,
     present_state,
 )
 
@@ -41,3 +45,18 @@ def test_callback_model_has_safe_noop_defaults_and_preserves_injected_callbacks(
 
     assert calls == [("example.com", True)]
 
+
+def test_state_icon_path_contract_accepts_path_and_string():
+    assert normalize_icon_path(Path("state.svg")) == "state.svg"
+    assert normalize_icon_path("/tmp/connected.svg") == "/tmp/connected.svg"
+
+
+def test_warp_mode_uses_exact_approved_spanish_label():
+    assert MODE_LABELS["warp"] == "WARP con DNS UDP"
+
+
+def test_compact_panel_uses_gtk3_widget_naming_api():
+    source = Path("src/warp_control/ui/compact_panel.py").read_text(encoding="utf-8")
+
+    assert ".set_name(" in source
+    assert ".set_widget_name(" not in source

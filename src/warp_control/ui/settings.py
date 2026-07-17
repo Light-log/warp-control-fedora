@@ -11,23 +11,12 @@ from gi.repository import Gtk
 
 from warp_control.config import Config
 from warp_control.models import WarpCapabilities
-from warp_control.ui.presenters import CONFIG_CONTENT_HEIGHT, UIActions
+from warp_control.ui.presenters import CONFIG_CONTENT_HEIGHT, MODE_LABELS, UIActions
 
 
 VIEWPORT_HEIGHT = CONFIG_CONTENT_HEIGHT
 KNOWN_MODES = ("warp", "warp+doh", "warp+dot", "doh", "dot", "tunnel_only", "proxy")
 KNOWN_PROTOCOLS = ("MASQUE", "WireGuard")
-MODE_LABELS = {
-    "warp": "WARP",
-    "warp+doh": "WARP + DoH",
-    "warp+dot": "WARP + DoT",
-    "doh": "Solo DoH",
-    "dot": "Solo DoT",
-    "tunnel_only": "Solo tráfico",
-    "proxy": "Proxy local",
-}
-
-
 class SettingsPage(Gtk.ScrolledWindow):
     def __init__(self, config: Config, actions: UIActions) -> None:
         super().__init__()

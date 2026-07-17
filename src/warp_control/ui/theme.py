@@ -37,6 +37,22 @@ DARK_PALETTE = Palette(
 )
 
 
+class ScreenProviderBinding:
+    def __init__(self, provider: object, priority: int) -> None:
+        self.provider = provider
+        self.priority = priority
+        self.screen = None
+
+    def install(self, screen: object, add_provider, remove_provider) -> None:
+        if screen is self.screen:
+            return
+        if self.screen is not None:
+            remove_provider(self.screen, self.provider)
+        self.screen = screen
+        if screen is not None:
+            add_provider(screen, self.provider, self.priority)
+
+
 def palette_for(theme: str) -> Palette:
     return LIGHT_PALETTE if theme == "light" else DARK_PALETTE
 

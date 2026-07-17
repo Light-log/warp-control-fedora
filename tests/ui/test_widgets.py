@@ -37,6 +37,25 @@ def test_main_window_uses_one_top_level_stack_and_same_window_for_modify():
     window.destroy()
 
 
+def test_state_svg_is_loaded_by_compact_panel_and_main_window(tmp_path):
+    icon = tmp_path / "connected.svg"
+    icon.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">'
+        '<rect width="24" height="24" fill="#16A34A"/></svg>',
+        encoding="utf-8",
+    )
+    window = MainWindow(Config(), UIActions())
+    original_provider = window._css_provider
+
+    window.apply_state(WarpState.CONNECTED, icon)
+    window.apply_config(Config(theme="light", accent="#1267D6"))
+
+    assert window.compact_panel.cloudflare_icon.get_storage_type() == Gtk.ImageType.PIXBUF
+    assert window.compact_panel.cloudflare_icon.get_pixbuf() is not None
+    assert window._css_provider is original_provider
+    window.destroy()
+
+
 def test_configuration_has_fixed_viewport_and_three_internally_scrolled_tabs():
     window = MainWindow(Config(), UIActions())
     assert window.get_default_size()[0] == 420
