@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warp-control"
+version = "2.0.0"
+description = "Desktop control panel for Cloudflare WARP"
+requires-python = ">=3.9"
+
+[project.scripts]
+warp-control = "warp_control.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py39"
