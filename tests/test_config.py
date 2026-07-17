@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import warp_control.config as config_module
 from warp_control.config import Config, DEFAULT_COLORS
 
 
@@ -127,6 +128,36 @@ def test_malformed_json_uses_defaults(tmp_path):
     assert config.colors == DEFAULT_COLORS
 
 
+def test_load_propagates_permission_error_without_changing_file(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    original = b'{"theme":"light"}'
+    path.write_bytes(original)
+    real_read_text = Path.read_text
+
+    def denied_read_text(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied_read_text)
+
+    with pytest.raises(PermissionError, match="denied"):
+        Config.load(path)
+
+    assert path.read_bytes() == original
+
+
+def test_load_rejects_future_schema_without_changing_file(tmp_path):
+    path = tmp_path / "config.json"
+    original = b'{"schema_version":3,"future_setting":{"keep":true}}'
+    path.write_bytes(original)
+
+    with pytest.raises(config_module.UnsupportedConfigVersionError, match="3"):
+        Config.load(path)
+
+    assert path.read_bytes() == original
+
+
 def test_save_and_reload_round_trip(tmp_path):
     path = tmp_path / "nested" / "config.json"
     config = Config.load(path)
@@ -165,6 +196,68 @@ def test_save_atomically_replaces_with_sibling_temp_file(tmp_path, monkeypatch):
     assert source != path
     assert destination == path
     assert not source.exists()
+
+
+def test_save_normalizes_invalid_public_mutations(tmp_path):
+    path = tmp_path / "config.json"
+    config = Config.load(path)
+    config.theme = "sepia"
+    config.accent = "#NOTHEX"
+    config.colors = {
+        "connected": {"primary": "bad", "secondary": "#010203"},
+        "connecting": {"primary": "#ABCDEF", "secondary": None},
+        "error": "red",
+    }
+    config.autostart_enabled = 1
+    config.auto_update_enabled = "false"
+    config.update_interval_seconds = True
+
+    config.save()
+
+    assert config.theme == "dark"
+    assert config.accent == "#F38020"
+    assert config.colors["connected"] == {
+        "primary": DEFAULT_COLORS["connected"]["primary"],
+        "secondary": "#010203",
+    }
+    assert config.colors["connecting"] == {
+        "primary": "#ABCDEF",
+        "secondary": DEFAULT_COLORS["connecting"]["secondary"],
+    }
+    assert config.colors["disconnected"] == DEFAULT_COLORS["disconnected"]
+    assert config.colors["error"] == DEFAULT_COLORS["error"]
+    assert config.autostart_enabled is True
+    assert config.auto_update_enabled is True
+    assert config.update_interval_seconds == 5
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "schema_version": 2,
+        "theme": config.theme,
+        "accent": config.accent,
+        "colors": config.colors,
+        "autostart_enabled": config.autostart_enabled,
+        "auto_update_enabled": config.auto_update_enabled,
+        "update_interval_seconds": config.update_interval_seconds,
+    }
+    assert Config.load(path) == config
+
+
+def test_save_replace_failure_preserves_original_and_cleans_temp(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    original = b'{"schema_version":2,"theme":"dark"}'
+    path.write_bytes(original)
+    config = Config.load(path)
+    config.theme = "light"
+
+    def failed_replace(source, destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", failed_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        config.save()
+
+    assert path.read_bytes() == original
+    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == []
 
 
 def test_reset_restores_defaults_and_persists_them(tmp_path):

@@ -3,7 +3,7 @@ import os
 import re
 import tempfile
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -16,6 +16,10 @@ DEFAULT_COLORS = {
     "error": {"primary": "#DC2626", "secondary": "#F87171"},
 }
 _COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+class UnsupportedConfigVersionError(ValueError):
+    """Raised when a config was written by a newer schema."""
 
 
 def _default_path() -> Path:
@@ -44,6 +48,39 @@ def _load_colors(value: object) -> Dict[str, Dict[str, str]]:
     return colors
 
 
+def _normalized_values(raw: object) -> Dict[str, object]:
+    if not isinstance(raw, dict):
+        raw = {}
+
+    theme = raw.get("theme")
+    autostart_enabled = raw.get("autostart_enabled")
+    auto_update_enabled = raw.get("auto_update_enabled")
+    update_interval_seconds = raw.get("update_interval_seconds")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "theme": theme if theme in {"light", "dark"} else "dark",
+        "accent": _valid_color(raw.get("accent"), "#F38020"),
+        "colors": _load_colors(raw.get("colors")),
+        "autostart_enabled": (
+            autostart_enabled
+            if isinstance(autostart_enabled, bool)
+            else True
+        ),
+        "auto_update_enabled": (
+            auto_update_enabled
+            if isinstance(auto_update_enabled, bool)
+            else True
+        ),
+        "update_interval_seconds": (
+            update_interval_seconds
+            if isinstance(update_interval_seconds, int)
+            and not isinstance(update_interval_seconds, bool)
+            and update_interval_seconds > 0
+            else 5
+        ),
+    }
+
+
 @dataclass
 class Config:
     schema_version: int = SCHEMA_VERSION
@@ -62,46 +99,43 @@ class Config:
         config_path = Path(path) if path is not None else _default_path()
         try:
             raw = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            raw = {}
-        if not isinstance(raw, dict):
+        except (FileNotFoundError, json.JSONDecodeError):
             raw = {}
 
-        theme = raw.get("theme")
-        accent = raw.get("accent")
-        autostart_enabled = raw.get("autostart_enabled")
-        auto_update_enabled = raw.get("auto_update_enabled")
-        update_interval_seconds = raw.get("update_interval_seconds")
+        if isinstance(raw, dict):
+            schema_version = raw.get("schema_version")
+            if (
+                isinstance(schema_version, int)
+                and not isinstance(schema_version, bool)
+                and schema_version > SCHEMA_VERSION
+            ):
+                raise UnsupportedConfigVersionError(
+                    f"Config schema {schema_version} is newer than supported "
+                    f"schema {SCHEMA_VERSION}"
+                )
 
-        return cls(
-            theme=theme if theme in {"light", "dark"} else "dark",
-            accent=_valid_color(accent, "#F38020"),
-            colors=_load_colors(raw.get("colors")),
-            autostart_enabled=(
-                autostart_enabled
-                if isinstance(autostart_enabled, bool)
-                else True
-            ),
-            auto_update_enabled=(
-                auto_update_enabled
-                if isinstance(auto_update_enabled, bool)
-                else True
-            ),
-            update_interval_seconds=(
-                update_interval_seconds
-                if isinstance(update_interval_seconds, int)
-                and not isinstance(update_interval_seconds, bool)
-                and update_interval_seconds > 0
-                else 5
-            ),
-            path=config_path,
+        return cls(**_normalized_values(raw), path=config_path)
+
+    def _normalize(self) -> Dict[str, object]:
+        values = _normalized_values(
+            {
+                "schema_version": self.schema_version,
+                "theme": self.theme,
+                "accent": self.accent,
+                "colors": self.colors,
+                "autostart_enabled": self.autostart_enabled,
+                "auto_update_enabled": self.auto_update_enabled,
+                "update_interval_seconds": self.update_interval_seconds,
+            }
         )
+        for name, value in values.items():
+            setattr(self, name, value)
+        return values
 
     def save(self) -> None:
+        data = self._normalize()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = asdict(self)
-        data.pop("path")
-        temporary_path = None
+        temporary_path: Optional[Path] = None
         try:
             with tempfile.NamedTemporaryFile(
                 "w",
@@ -117,10 +151,9 @@ class Config:
                 temporary.flush()
                 os.fsync(temporary.fileno())
             os.replace(temporary_path, self.path)
-        except Exception:
+        finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
-            raise
 
     def reset(self) -> None:
         defaults = type(self)(path=self.path)
