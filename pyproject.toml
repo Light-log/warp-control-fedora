@@ -17,6 +17,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+markers = [
+    "ui: GTK widget tests (require an available display)",
+]
 
 [tool.ruff]
 target-version = "py39"
