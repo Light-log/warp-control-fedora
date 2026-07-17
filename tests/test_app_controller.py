@@ -13,7 +13,7 @@ from warp_control.models import (
     WarpState,
     WarpStatus,
 )
-from warp_control.app import ApplicationController, RefreshSnapshot
+from warp_control.app import ApplicationController, RefreshSnapshot, select_first_launch_flow
 
 
 class FakeTasks:
@@ -245,6 +245,17 @@ def test_active_first_launch_installer_defers_warp_refresh(tmp_path):
 
     assert flow.calls == 1
     assert tasks.pending == []
+
+
+def test_preinstalled_warp_selects_registration_check_without_installation():
+    calls = []
+    selected = select_first_launch_flow(
+        "/usr/bin/warp-cli",
+        lambda: calls.append("install"),
+        lambda: calls.append("registration") or "registration-flow",
+    )
+    assert selected == "registration-flow"
+    assert calls == ["registration"]
 
 
 def test_refresh_is_exclusive_and_applies_one_coherent_snapshot(tmp_path):

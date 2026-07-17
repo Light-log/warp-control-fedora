@@ -8,7 +8,7 @@ from typing import Callable, Iterator, Optional
 
 from warp_control.installers.detector import Distribution, SystemInfo
 from warp_control.installers.models import InstallAction, InstallPlan
-from warp_control.models import RegistrationState
+from warp_control.models import OperationResult, RegistrationState, RegistrationStatus, WarpState
 from warp_control.privileged.runner import PROGRESS_STAGES, PROGRESS_STATUSES
 
 
@@ -126,6 +126,67 @@ class InstallPresenter:
             self.limited_mode = True
             return None
         return ("/usr/bin/warp-cli", "--accept-tos", "registration", "new")
+
+
+class RegistrationCoordinator:
+    """Check and create registration without depending on GTK."""
+
+    def __init__(
+        self,
+        *,
+        warp,
+        tasks,
+        request_terms: Callable[[], bool],
+        on_complete: Callable[[], None],
+        on_limited: Callable[[str], None],
+        on_retry: Callable[[Callable[[], bool], str], None],
+    ) -> None:
+        self.warp = warp
+        self.tasks = tasks
+        self.request_terms = request_terms
+        self.on_complete = on_complete
+        self.on_limited = on_limited
+        self.on_retry = on_retry
+        self.limited_mode = False
+
+    def start(self) -> bool:
+        self.tasks.submit(
+            self.warp.registration_status,
+            self._status_complete,
+            self._exception,
+        )
+        return True
+
+    def _status_complete(self, status) -> None:
+        if not isinstance(status, RegistrationStatus):
+            self._fail("La respuesta del registro no es válida.")
+            return
+        if status.state is RegistrationState.REGISTERED:
+            self.on_complete()
+            return
+        if status.state is not RegistrationState.UNREGISTERED:
+            self._fail("No se pudo comprobar el registro de WARP.")
+            return
+        if not self.request_terms():
+            self.limited_mode = True
+            self.on_limited("No se aceptaron los términos; se continuará en modo limitado.")
+            self.on_complete()
+            return
+        self.tasks.submit(self.warp.register, self._register_complete, self._exception)
+
+    def _register_complete(self, result) -> None:
+        if isinstance(result, OperationResult) and result.ok:
+            self.on_complete()
+            return
+        self._fail("No se pudo crear el registro de WARP.")
+
+    def _exception(self, _error: Exception) -> None:
+        self._fail("La comprobación del registro terminó con un error.")
+
+    def _fail(self, message: str) -> None:
+        self.limited_mode = True
+        self.on_limited(message)
+        self.on_retry(self.start, message)
 
 
 class InstallerProcess:
@@ -316,14 +377,60 @@ if Gtk is not None:
             if self.progress is not None:
                 self.progress.destroy()
                 self.progress = None
+            if not isinstance(registration, RegistrationStatus):
+                self._registration_status_failed()
+                return
             if registration.state is RegistrationState.UNREGISTERED:
                 accepted = confirm_registration_terms(self.parent)
                 if self.presenter.registration_argv(accepted) is None:
                     self.on_complete()
                     return
-                self.tasks.submit(self.warp.register, lambda _result: self.on_complete(), self._failed)
+                self.tasks.submit(self.warp.register, self._registration_complete, self._failed)
                 return
-            self.on_complete()
+            if registration.state is RegistrationState.REGISTERED:
+                self.on_complete()
+                return
+            self._registration_status_failed()
+
+        def _registration_status_failed(self) -> None:
+            self.presenter.limited_mode = True
+            dialog = Gtk.MessageDialog(
+                transient_for=self.parent,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.NONE,
+                text="No se pudo comprobar el registro",
+            )
+            dialog.add_button("Modo limitado", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Reintentar", Gtk.ResponseType.OK)
+            retry = dialog.run() == Gtk.ResponseType.OK
+            dialog.destroy()
+            if retry:
+                self.tasks.submit(self.warp.registration_status, self._installed, self._failed)
+            else:
+                self.on_complete()
+
+        def _registration_complete(self, result) -> None:
+            if isinstance(result, OperationResult) and result.ok:
+                self.on_complete()
+                return
+            self.presenter.limited_mode = True
+            dialog = Gtk.MessageDialog(
+                transient_for=self.parent,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.NONE,
+                text="No se pudo crear el registro",
+            )
+            dialog.format_secondary_text("Puedes reintentar la creación del registro o continuar en modo limitado.")
+            dialog.add_button("Modo limitado", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Reintentar", Gtk.ResponseType.OK)
+            retry = dialog.run() == Gtk.ResponseType.OK
+            dialog.destroy()
+            if retry:
+                self.tasks.submit(self.warp.register, self._registration_complete, self._failed)
+            else:
+                self.on_complete()
 
         def _failed(self, _error: Exception) -> None:
             if self.progress is not None:
@@ -332,3 +439,40 @@ if Gtk is not None:
             self.presenter.limited_mode = True
             self._instructions("La instalación no terminó. Puedes reintentar o continuar en modo limitado.")
             self.on_complete()
+
+
+    class GtkRegistrationFlow:
+        """GTK adapter around the headless registration coordinator."""
+
+        def __init__(self, *, parent, warp, tasks, on_complete: Callable[[], None]) -> None:
+            self.parent = parent
+            self.coordinator = RegistrationCoordinator(
+                warp=warp,
+                tasks=tasks,
+                request_terms=lambda: confirm_registration_terms(parent),
+                on_complete=on_complete,
+                on_limited=self._limited,
+                on_retry=self._offer_retry,
+            )
+
+        def start(self) -> bool:
+            return self.coordinator.start()
+
+        def _limited(self, _message: str) -> None:
+            self.parent.apply_state(WarpState.ERROR)
+
+        def _offer_retry(self, retry: Callable[[], bool], message: str) -> None:
+            dialog = Gtk.MessageDialog(
+                transient_for=self.parent,
+                modal=True,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.NONE,
+                text="No se pudo completar el registro",
+            )
+            dialog.format_secondary_text(message)
+            dialog.add_button("Continuar en modo limitado", Gtk.ResponseType.CANCEL)
+            dialog.add_button("Reintentar", Gtk.ResponseType.OK)
+            should_retry = dialog.run() == Gtk.ResponseType.OK
+            dialog.destroy()
+            if should_retry:
+                retry()

@@ -19,6 +19,13 @@ APT_KEYRING = Path("/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg")
 APT_SOURCE = Path("/etc/apt/sources.list.d/cloudflare-client.list")
 RPM_REPOSITORY = Path("/etc/yum.repos.d/cloudflare-warp.repo")
 MAX_DOWNLOAD_BYTES = 256 * 1024
+EXPECTED_SIGNING_FINGERPRINT = "C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA"
+EXPECTED_SIGNING_UID = "Cloudflare Package Repository <support@cloudflare.com>"
+APPROVED_APT_SOURCE_LINES = frozenset(
+    "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] "
+    f"{APT_REPOSITORY_URL} {codename} main\n"
+    for codename in ("jammy", "noble", "resolute", "bookworm", "trixie")
+)
 _URL = re.compile(r"https?://[^\s'\"<>]+")
 _ALLOWED_RPM_URLS = frozenset(
     {
@@ -91,6 +98,36 @@ def validate_rpm_repository(contents: bytes) -> None:
     }
     if values != expected:
         raise RepositoryRejected("repository file differs from the approved definition")
+
+
+def validate_signing_key(colon_output: str) -> None:
+    """Require exactly one approved primary key; subkey fingerprints are separate."""
+    if not isinstance(colon_output, str) or len(colon_output.encode("utf-8")) > MAX_DOWNLOAD_BYTES:
+        raise RepositoryRejected("invalid signing key metadata")
+    primary_fingerprints = []
+    uids = []
+    key_kind = None
+    primary_count = 0
+    for line in colon_output.splitlines():
+        fields = line.split(":")
+        record = fields[0] if fields else ""
+        if record in {"pub", "sub"}:
+            key_kind = record
+            if record == "pub":
+                primary_count += 1
+        elif record == "fpr" and len(fields) > 9:
+            if key_kind == "pub":
+                primary_fingerprints.append(fields[9])
+            # A subkey fingerprint is deliberately ignored, never mistaken for primary.
+            key_kind = None
+        elif record == "uid" and len(fields) > 9:
+            uids.append(fields[9])
+    if primary_count != 1 or len(primary_fingerprints) != 1:
+        raise RepositoryRejected("expected exactly one primary signing key")
+    if primary_fingerprints[0] != EXPECTED_SIGNING_FINGERPRINT:
+        raise RepositoryRejected("signing key fingerprint is not approved")
+    if EXPECTED_SIGNING_UID not in uids:
+        raise RepositoryRejected("signing key UID is not approved")
 
 
 def atomic_write(path: Path, contents: bytes, mode: int = 0o644) -> None:

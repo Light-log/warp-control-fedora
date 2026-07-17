@@ -19,6 +19,7 @@ from warp_control.privileged.repositories import (
     RepositoryRejected,
     repository_config,
     validate_rpm_repository,
+    validate_signing_key,
 )
 from warp_control.privileged.runner import (
     ConcurrentExecution,
@@ -116,6 +117,39 @@ def test_downloaded_rpm_repository_rejects_any_foreign_url():
         )
 
 
+def test_repository_internal_boundaries_reject_tampered_inputs_before_commands(tmp_path):
+    calls = []
+    helper = InstallWarpHelper(
+        runner=PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args)),
+        detect=lambda: system(Distribution.FEDORA, "44"),
+        progress=JsonProgress(io.StringIO()),
+        lock_path=tmp_path / "lock",
+        rpm_repository=tmp_path / "repo",
+        apt_keyring=tmp_path / "key",
+        apt_source=tmp_path / "source",
+    )
+    with pytest.raises(RepositoryRejected):
+        helper._install_rpm_repository("https://pkg.cloudflareclient.com/evil")
+    with pytest.raises(RepositoryRejected):
+        helper._install_apt_repository("https://example.com/key", "deb evil\n")
+    assert calls == []
+
+
+def test_signing_key_requires_exact_primary_fingerprint_and_handles_subkeys():
+    valid = (
+        "pub:-:4096:1:6E2DD2174FA1C3BA:0:0::-:::scESC::::::23::0:\n"
+        "fpr:::::::::C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA:\n"
+        "uid:-::::0::hash::Cloudflare Package Repository <support@cloudflare.com>::::::::::0:\n"
+        "sub:-:4096:1:1111111111111111:0:0:::::e::::::23:\n"
+        "fpr:::::::::AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA:\n"
+    )
+    validate_signing_key(valid)
+    with pytest.raises(RepositoryRejected, match="fingerprint"):
+        validate_signing_key(valid.replace("C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA", "B" * 40))
+    with pytest.raises(RepositoryRejected, match="primary"):
+        validate_signing_key(valid + valid)
+
+
 def test_json_progress_has_strict_small_schema():
     output = io.StringIO()
     progress = JsonProgress(output)
@@ -188,7 +222,14 @@ def _installing_runner(calls):
         if argv[:4] == ["/usr/bin/gpg", "--batch", "--yes", "--no-options"]:
             output = Path(argv[argv.index("--output") + 1])
             output.write_bytes(b"binary-keyring")
-        return subprocess.CompletedProcess(argv, 0, "", "")
+        stdout = ""
+        if "--show-keys" in argv:
+            stdout = (
+                "pub:-:4096:1:6E2DD2174FA1C3BA:0:0::-:::scESC::::::23::0:\n"
+                "fpr:::::::::C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA:\n"
+                "uid:-::::0::hash::Cloudflare Package Repository <support@cloudflare.com>::::::::::0:\n"
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
 
     return fake_run
 
@@ -256,9 +297,27 @@ def test_restart_helper_is_purpose_only(tmp_path):
         runner=PrivilegedCommandRunner(run_callable=fake_run),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
+        detect=lambda: system(Distribution.FEDORA, "44"),
     )
     helper.run()
     assert calls == [("/usr/bin/systemctl", "restart", "warp-svc.service")]
+
+
+@pytest.mark.parametrize(
+    "unsupported",
+    [system(Distribution.ARCH, None), system(Distribution.UNKNOWN, None), system(Distribution.FEDORA, "42")],
+)
+def test_restart_helper_rejects_unsupported_system_before_systemctl(tmp_path, unsupported):
+    calls = []
+    helper = RestartWarpHelper(
+        runner=PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args)),
+        progress=JsonProgress(io.StringIO()),
+        lock_path=tmp_path / "lock",
+        detect=lambda: unsupported,
+    )
+    with pytest.raises(InvocationRejected):
+        helper.run()
+    assert calls == []
 
 
 def test_libexec_entrypoints_are_fixed_and_argument_free():

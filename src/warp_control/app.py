@@ -576,6 +576,11 @@ def _cache_dir() -> Path:
     return (base or Path.home() / ".cache") / "warp-control" / "icons"
 
 
+def select_first_launch_flow(executable, install_factory, registration_factory):
+    """Select lazily so an existing CLI always checks registration, not installation."""
+    return registration_factory() if executable else install_factory()
+
+
 def _build_runtime(config: Config):
     """Import GTK only for the executable path, keeping controller tests headless."""
     import gi
@@ -634,13 +639,17 @@ def _build_runtime(config: Config):
         fallback_icon_path=runtime_asset_path("cloudflare-fallback.svg"),
     )
     holder["controller"] = controller
-    if shutil.which("warp-cli") is None:
-        from warp_control.installers import installation_plan
-        from warp_control.installers.detector import detect_system
-        from warp_control.ui.install_dialog import GtkInstallationFlow, InstallPresenter
+    from warp_control.installers import installation_plan
+    from warp_control.installers.detector import detect_system
+    from warp_control.ui.install_dialog import (
+        GtkInstallationFlow,
+        GtkRegistrationFlow,
+        InstallPresenter,
+    )
 
+    def installation_flow():
         system = detect_system()
-        controller.install_flow = GtkInstallationFlow(
+        return GtkInstallationFlow(
             parent=window,
             presenter=InstallPresenter(system, installation_plan(system)),
             tasks=tasks,
@@ -648,6 +657,18 @@ def _build_runtime(config: Config):
             warp=warp,
             on_complete=controller.refresh,
         )
+
+    def registration_flow():
+        return GtkRegistrationFlow(
+            parent=window,
+            warp=warp,
+            tasks=tasks,
+            on_complete=controller.refresh,
+        )
+
+    controller.install_flow = select_first_launch_flow(
+        shutil.which("warp-cli"), installation_flow, registration_flow
+    )
     return controller, Gtk
 
 

@@ -4,11 +4,13 @@ import pytest
 
 from warp_control.installers import installation_plan
 from warp_control.installers.detector import Architecture, Distribution, SystemInfo
+from warp_control.models import OperationResult, RegistrationState, RegistrationStatus
 from warp_control.ui.install_dialog import (
     InstallDecision,
     InstallerProcess,
     InstallPresenter,
     ProgressProtocolError,
+    RegistrationCoordinator,
     build_pkexec_argv,
     parse_progress_line,
 )
@@ -119,3 +121,66 @@ def test_registration_requires_explicit_terms_acceptance():
         "registration",
         "new",
     )
+
+
+def test_registration_coordinator_checks_existing_cli_and_registers_only_after_terms():
+    calls = []
+
+    class Warp:
+        def registration_status(self):
+            calls.append("status")
+            return RegistrationStatus(False, "missing", 1, RegistrationState.UNREGISTERED)
+
+        def register(self):
+            calls.append("register")
+            return OperationResult(True, "", 0)
+
+    class Tasks:
+        def submit(self, worker, success, failure):
+            try:
+                success(worker())
+            except Exception as error:
+                failure(error)
+
+    completed = []
+    limited = []
+    retries = []
+    flow = RegistrationCoordinator(
+        warp=Warp(),
+        tasks=Tasks(),
+        request_terms=lambda: True,
+        on_complete=lambda: completed.append(True),
+        on_limited=lambda message: limited.append(message),
+        on_retry=lambda callback, message: retries.append((callback, message)),
+    )
+    assert flow.start() is True
+    assert calls == ["status", "register"]
+    assert completed == [True]
+    assert limited == []
+    assert retries == []
+
+
+def test_registration_failure_enters_limited_mode_and_exposes_real_retry():
+    class Warp:
+        def registration_status(self):
+            return RegistrationStatus(False, "missing", 1, RegistrationState.UNREGISTERED)
+
+        def register(self):
+            return OperationResult(False, "failed", 7)
+
+    class Tasks:
+        def submit(self, worker, success, failure):
+            success(worker())
+
+    retries = []
+    limited = []
+    flow = RegistrationCoordinator(
+        warp=Warp(), tasks=Tasks(), request_terms=lambda: True,
+        on_complete=lambda: None,
+        on_limited=lambda message: limited.append(message),
+        on_retry=lambda callback, message: retries.append((callback, message)),
+    )
+    flow.start()
+    assert limited
+    assert len(retries) == 1
+    assert retries[0][0] == flow.start

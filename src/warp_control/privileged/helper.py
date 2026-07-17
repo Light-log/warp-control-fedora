@@ -12,14 +12,18 @@ from warp_control.installers import installation_plan
 from warp_control.installers.detector import SystemInfo, detect_system
 from warp_control.installers.models import InstallAction
 from warp_control.privileged.repositories import (
+    APPROVED_APT_SOURCE_LINES,
+    APT_KEY_URL,
     APT_KEYRING,
     APT_SOURCE,
     MAX_DOWNLOAD_BYTES,
     RPM_REPOSITORY,
+    RPM_REPOSITORY_URL,
     RepositoryRejected,
     atomic_write,
     repository_config,
     validate_rpm_repository,
+    validate_signing_key,
 )
 from warp_control.privileged.runner import JsonProgress, PrivilegedCommandRunner, exclusive_lock
 
@@ -77,14 +81,17 @@ class InstallWarpHelper:
         self.apt_source = Path(apt_source)
         self.rpm_repository = Path(rpm_repository)
 
-    def _command(self, stage: str, message: str, argv: Sequence[str], timeout: int = 300) -> None:
+    def _command(self, stage: str, message: str, argv: Sequence[str], timeout: int = 300):
         self.progress.emit(stage, "running", message)
         result = self.runner.run(argv, timeout=timeout)
         if not result.ok:
             raise InvocationRejected(f"{stage} failed with exit status {result.returncode}")
         self.progress.emit(stage, "done", message)
+        return result
 
     def _install_rpm_repository(self, url: str) -> None:
+        if url != RPM_REPOSITORY_URL:
+            raise RepositoryRejected("RPM repository URL is not approved")
         self.rpm_repository.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         descriptor, name = tempfile.mkstemp(prefix=".cloudflare-warp.", dir=str(self.rpm_repository.parent))
         os.close(descriptor)
@@ -105,6 +112,8 @@ class InstallWarpHelper:
             temporary.unlink(missing_ok=True)
 
     def _install_apt_repository(self, key_url: str, source_line: str) -> None:
+        if key_url != APT_KEY_URL or source_line not in APPROVED_APT_SOURCE_LINES:
+            raise RepositoryRejected("APT repository inputs are not approved")
         self.apt_keyring.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="warp-control-key-", dir="/tmp") as directory:
             source = Path(directory) / "pubkey.gpg"
@@ -119,13 +128,15 @@ class InstallWarpHelper:
             )
             if not source.is_file() or not 0 < source.stat().st_size <= MAX_DOWNLOAD_BYTES:
                 raise RepositoryRejected("downloaded key has an invalid size")
-            self._command(
+            key_metadata = self._command(
                 "repository", "Verificando la clave OpenPGP de Cloudflare",
                 (
                     "/usr/bin/gpg", "--batch", "--no-options", "--homedir", directory,
-                    "--no-auto-key-retrieve", "--show-keys", str(source),
+                    "--no-auto-key-retrieve", "--with-colons", "--fingerprint",
+                    "--show-keys", str(source),
                 ),
             )
+            validate_signing_key(key_metadata.stdout)
             self._command(
                 "repository", "Creando el keyring firmado",
                 (
@@ -163,13 +174,23 @@ class InstallWarpHelper:
 
 
 class RestartWarpHelper:
-    def __init__(self, *, runner=None, progress=None, lock_path: Path = DEFAULT_LOCK) -> None:
+    def __init__(
+        self,
+        *,
+        runner=None,
+        progress=None,
+        lock_path: Path = DEFAULT_LOCK,
+        detect: Callable[[], SystemInfo] = detect_system,
+    ) -> None:
         self.runner = runner or PrivilegedCommandRunner()
         self.progress = progress or JsonProgress(sys.stdout)
         self.lock_path = Path(lock_path)
+        self.detect = detect
 
     def run(self) -> None:
         with exclusive_lock(self.lock_path):
+            if not installation_plan(self.detect()).supported:
+                raise InvocationRejected("el sistema detectado no está soportado")
             self.progress.emit("service", "running", "Reiniciando warp-svc")
             result = self.runner.run(("/usr/bin/systemctl", "restart", "warp-svc.service"), timeout=90)
             if not result.ok:
