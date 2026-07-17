@@ -14,3 +14,12 @@ Decisiones principales:
 - Colores de estado para el icono; color de acento para acciones y navegación.
 - Cabecera integrada con el tema y pestañas de tamaño fijo.
 
+## Estado de implementación (2026-07-16)
+
+- Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
+- Tasks 1 y 2 terminadas y aprobadas mediante revisión de especificación y calidad.
+- Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
+- Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
+- `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
+- Verificación actual: 61 pruebas aprobadas y Ruff limpio.
+- Siguiente tarea: Task 3, servicio `WarpService` y detección de capacidades.

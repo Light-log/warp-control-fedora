@@ -1,5 +1,5 @@
 # Próximos pasos
 
-1. La especificación fue aprobada por el usuario.
-2. Revisar y ejecutar `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-3. Usar subagentes con propietarios de archivos no solapados y revisión entre tareas.
+1. Ejecutar Task 3 del plan: modelos y servicio `warp-cli` con TDD.
+2. Continuar Tasks 4–14 con un implementador fresco y dos revisiones por tarea.
+3. Mantener ejecución directa en `main`, autorizada por el usuario.
