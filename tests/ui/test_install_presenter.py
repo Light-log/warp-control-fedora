@@ -6,6 +6,11 @@ import pytest
 from warp_control.installers import installation_plan
 from warp_control.installers.detector import Architecture, Distribution, SystemInfo
 from warp_control.models import OperationResult, RegistrationState, RegistrationStatus
+from warp_control.privileged.helper import (
+    INSTALL_IDLE_GRACE,
+    MAX_INSTALL_TOTAL_TIMEOUT,
+    MAX_STAGE_TIMEOUT,
+)
 from warp_control.ui.install_dialog import (
     InstallDecision,
     InstallerProcess,
@@ -178,6 +183,76 @@ def test_installer_progress_timeouts_kill_and_wait(timeouts):
     with pytest.raises(ProgressProtocolError, match="timed out"):
         list(InstallerProcess(lambda *args, **kwargs: process, **timeouts).events())
     assert process.killed and process.waits >= 1
+
+
+@pytest.mark.parametrize(
+    ("quiet_seconds", "succeeds"),
+    [
+        (MAX_STAGE_TIMEOUT, True),
+        (MAX_STAGE_TIMEOUT + INSTALL_IDLE_GRACE + 1, False),
+    ],
+)
+def test_installer_watchdog_accepts_full_stage_budget_and_kills_after_deadline(
+    quiet_seconds, succeeds
+):
+    class Clock:
+        value = 0.0
+        lock = threading.Lock()
+
+        def __call__(self):
+            with self.lock:
+                return self.value
+
+        def advance(self, seconds):
+            with self.lock:
+                self.value += seconds
+
+    clock = Clock()
+
+    class Output:
+        calls = 0
+
+        def readline(self, _limit):
+            self.calls += 1
+            if self.calls == 1:
+                clock.advance(quiet_seconds)
+                return (
+                    json.dumps(
+                        {"stage": "complete", "status": "done", "message": "Listo"}
+                    ).encode()
+                    + b"\n"
+                )
+            return b""
+
+        def close(self):
+            return None
+
+    class Process:
+        stdout = Output()
+        killed = False
+        waits = 0
+
+        def poll(self):
+            return None if not self.killed else -9
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            self.waits += 1
+            return -9 if self.killed else 0
+
+    process = Process()
+    installer = InstallerProcess(lambda *args, **kwargs: process, clock=clock)
+    assert installer._overall_timeout == MAX_INSTALL_TOTAL_TIMEOUT
+    assert installer._idle_timeout == MAX_STAGE_TIMEOUT + INSTALL_IDLE_GRACE
+    if succeeds:
+        assert list(installer.events())[-1].stage == "complete"
+        assert process.killed is False
+    else:
+        with pytest.raises(ProgressProtocolError, match="timed out"):
+            list(installer.events())
+        assert process.killed is True and process.waits >= 1
 
 
 def test_progress_parser_accepts_only_bounded_jsonl_schema():

@@ -14,6 +14,11 @@ from typing import Callable, Iterator, Optional
 from warp_control.installers.detector import Distribution, SystemInfo
 from warp_control.installers.models import InstallAction, InstallPlan
 from warp_control.models import OperationResult, RegistrationState, RegistrationStatus, WarpState
+from warp_control.privileged.helper import (
+    INSTALL_IDLE_GRACE,
+    MAX_INSTALL_TOTAL_TIMEOUT,
+    MAX_STAGE_TIMEOUT,
+)
 from warp_control.privileged.runner import PROGRESS_STAGES, PROGRESS_STATUSES
 
 
@@ -297,8 +302,8 @@ class InstallerProcess:
         popen: Callable = subprocess.Popen,
         *,
         clock: Callable[[], float] = time.monotonic,
-        overall_timeout: float = 1200,
-        idle_timeout: float = 120,
+        overall_timeout: float = MAX_INSTALL_TOTAL_TIMEOUT,
+        idle_timeout: float = MAX_STAGE_TIMEOUT + INSTALL_IDLE_GRACE,
         killpg: Callable[[int, int], None] = os.killpg,
     ) -> None:
         self._popen = popen
@@ -349,9 +354,9 @@ class InstallerProcess:
             name="warp-control-installer-progress",
             daemon=True,
         )
-        reader.start()
         started = self._clock()
         last_activity = started
+        reader.start()
         terminal_seen = False
         try:
             while True:
@@ -368,7 +373,13 @@ class InstallerProcess:
                     continue
                 if raw_line is None:
                     break
-                last_activity = self._clock()
+                received_at = self._clock()
+                if (
+                    received_at > started + self._overall_timeout
+                    or received_at > last_activity + self._idle_timeout
+                ):
+                    raise ProgressProtocolError("helper progress timed out")
+                last_activity = received_at
                 if isinstance(raw_line, str):
                     raw_line = raw_line.encode("utf-8")
                 if len(raw_line) > MAX_PROGRESS_LINE or not raw_line.endswith(b"\n"):

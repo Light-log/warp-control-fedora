@@ -34,6 +34,12 @@ from warp_control.privileged.runner import JsonProgress, PrivilegedCommandRunner
 
 
 DEFAULT_LOCK = Path("/run/lock/warp-control-privileged.lock")
+# A package-manager stage may legitimately take fifteen minutes on a slow host.
+MAX_STAGE_TIMEOUT = 900
+# Four full stage budgets cover the roughly 3000-second worst-case supported
+# plan (repository/key verification, metadata, packages and service) plus grace.
+MAX_INSTALL_TOTAL_TIMEOUT = MAX_STAGE_TIMEOUT * 4
+INSTALL_IDLE_GRACE = 60
 
 
 class InvocationRejected(RuntimeError):
@@ -91,6 +97,8 @@ class InstallWarpHelper:
         self.rpm_keyring = Path(rpm_keyring)
 
     def _command(self, stage: str, message: str, argv: Sequence[str], timeout: int = 300):
+        if not 0 < timeout <= MAX_STAGE_TIMEOUT:
+            raise InvocationRejected("command timeout exceeds the approved stage budget")
         self.progress.emit(stage, "running", message)
         result = self.runner.run(argv, timeout=timeout)
         if not result.ok:
