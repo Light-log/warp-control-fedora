@@ -1,4 +1,3 @@
-import os
 import subprocess
 
 import pytest
@@ -32,22 +31,16 @@ def test_runner_passes_exact_safe_subprocess_arguments(monkeypatch):
     )
 
     assert result == CommandResult(True, "done", "", 0)
-    assert calls == [
-        (
-            ["warp-cli", "status"],
-            {
-                "shell": False,
-                "capture_output": True,
-                "text": True,
-                "timeout": 7,
-                "env": {
-                    **os.environ,
-                    "LC_ALL": "C",
-                    "LANG": "C",
-                },
-            },
-        )
-    ]
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    assert argv == ["warp-cli", "status"]
+    assert kwargs["shell"] is False
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert kwargs["timeout"] == 7
+    assert kwargs["env"]["LC_ALL"] == "C"
+    assert kwargs["env"]["LANG"] == "C"
+    assert kwargs["env"]["WARP_CONTROL_TEST_ENV"] == "preserved"
 
 
 @pytest.mark.parametrize("argv", ["warp-cli status", b"warp-cli", [], ()])
@@ -66,6 +59,18 @@ def test_runner_converts_missing_executable_to_failed_result():
     assert result.stdout == ""
     assert "missing-command" in result.stderr
     assert result.returncode == 127
+
+
+def test_runner_converts_other_execution_os_errors_to_failed_result():
+    def denied(argv, **kwargs):
+        raise PermissionError(13, "Permission denied", argv[0])
+
+    result = CommandRunner(run_callable=denied).run(["non-executable"])
+
+    assert result.ok is False
+    assert result.stdout == ""
+    assert "non-executable" in result.stderr
+    assert result.returncode == 126
 
 
 def test_runner_converts_timeout_and_preserves_partial_output():

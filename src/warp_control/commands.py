@@ -5,6 +5,7 @@ from typing import Callable, Mapping, Optional, Sequence, Union
 
 
 _MISSING_EXECUTABLE = 127
+_CANNOT_EXECUTE = 126
 _TIMED_OUT = 124
 _Output = Optional[Union[str, bytes]]
 
@@ -59,6 +60,8 @@ class CommandRunner:
             )
         except FileNotFoundError as error:
             return CommandResult(False, "", str(error), _MISSING_EXECUTABLE)
+        except OSError as error:
+            return CommandResult(False, "", str(error), _CANNOT_EXECUTE)
         except subprocess.TimeoutExpired as error:
             return CommandResult(
                 False,

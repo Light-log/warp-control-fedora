@@ -26,6 +26,9 @@ def test_normalize_host_returns_canonical_ascii_host(value, expected):
         "/only/a/path",
         "https:///missing-host",
         "127.0.0.1",
+        "127.1",
+        "0177.0.0.1",
+        "0x7f.0.0.1",
         "https://[2001:db8::1]/",
         "bad_label.example",
         "-bad.example",
@@ -35,6 +38,7 @@ def test_normalize_host_returns_canonical_ascii_host(value, expected):
         "example.com\nmalicious.test",
         "**.example.com",
         "localhost",
+        "https://example.com\\@evil.com",
     ],
 )
 def test_normalize_host_rejects_invalid_values(value):
@@ -46,6 +50,17 @@ def test_expand_host_rule_returns_immutable_exact_rule():
     assert expand_host_rule("Example.com", include_subdomains=False) == (
         "example.com",
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("faß.de", "xn--fa-hia.de"),
+        ("FAẞ.DE", "xn--fa-hia.de"),
+    ],
+)
+def test_normalize_host_uses_idna2008_with_uts46(value, expected):
+    assert normalize_host(value) == expected
 
 
 def test_expand_host_rule_returns_exact_then_wildcard_for_subdomains():
@@ -67,8 +82,8 @@ def test_parse_hosts_normalizes_deduplicates_sorts_and_ignores_noise():
     """
 
     assert parse_hosts(output) == (
+        "*.sub.example.com",
         "example.com",
-        "sub.example.com",
         "xn--mnich-kva.example",
     )
 
@@ -77,4 +92,11 @@ def test_parse_hosts_accepts_arbitrary_whitespace():
     assert parse_hosts("beta.example\talpha.example\n beta.example") == (
         "alpha.example",
         "beta.example",
+    )
+
+
+def test_parse_hosts_preserves_exact_and_wildcard_as_distinct_rules():
+    assert parse_hosts("example.com *.example.com *.Example.com") == (
+        "*.example.com",
+        "example.com",
     )

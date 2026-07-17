@@ -1,8 +1,11 @@
 import ipaddress
 import re
+import socket
 import unicodedata
 from typing import Tuple
 from urllib.parse import urlsplit
+
+import idna
 
 
 _ASCII_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -16,6 +19,8 @@ def normalize_host(value: str) -> str:
     """
     if not isinstance(value, str) or not value:
         raise ValueError("host must be a non-empty string")
+    if "\\" in value:
+        raise ValueError("host cannot contain backslashes")
     if any(character.isspace() for character in value) or any(
         unicodedata.category(character).startswith("C") for character in value
     ):
@@ -39,8 +44,10 @@ def normalize_host(value: str) -> str:
         raise ValueError("host is empty")
 
     try:
-        ascii_host = host.encode("idna").decode("ascii").lower()
-    except UnicodeError as error:
+        ascii_host = idna.encode(
+            host, uts46=True, std3_rules=True
+        ).decode("ascii").lower()
+    except idna.IDNAError as error:
         raise ValueError("host is not valid IDNA") from error
 
     if len(ascii_host) > 253:
@@ -53,7 +60,12 @@ def normalize_host(value: str) -> str:
     try:
         ipaddress.ip_address(ascii_host)
     except ValueError:
-        pass
+        try:
+            socket.inet_aton(ascii_host)
+        except OSError:
+            pass
+        else:
+            raise ValueError("IP addresses are not host rules")
     else:
         raise ValueError("IP addresses are not host rules")
     return ascii_host
@@ -71,8 +83,10 @@ def parse_hosts(output: str) -> Tuple[str, ...]:
     """Parse, canonicalize, deduplicate, and sort hosts from CLI output."""
     hosts = set()
     for token in output.split():
+        wildcard = token.startswith("*.")
         try:
-            hosts.add(normalize_host(token))
+            host = normalize_host(token)
         except ValueError:
             continue
+        hosts.add(f"*.{host}" if wildcard else host)
     return tuple(sorted(hosts))
