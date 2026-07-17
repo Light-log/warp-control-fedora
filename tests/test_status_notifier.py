@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from warp_control.app_indicator import AppIndicatorFallback, NativeContextMenu
@@ -6,8 +7,9 @@ from warp_control.tray import TrayActions, TrayManager
 
 
 class FakeBus:
-    def __init__(self, watcher: bool = True) -> None:
+    def __init__(self, watcher: bool = True, auto_acquire: bool = True) -> None:
         self.watcher = watcher
+        self.auto_acquire = auto_acquire
         self.exported = []
         self.owned = []
         self.calls = []
@@ -16,6 +18,8 @@ class FakeBus:
         self.unowns = []
         self.method_handler = None
         self.property_handler = None
+        self.acquired = None
+        self.lost = None
 
     def watcher_available(self) -> bool:
         return self.watcher
@@ -26,9 +30,19 @@ class FakeBus:
         self.property_handler = property_handler
         return 41
 
-    def own_name(self, name):
+    def own_name(self, name, acquired, lost):
         self.owned.append(name)
+        self.acquired = acquired
+        self.lost = lost
+        if self.auto_acquire:
+            acquired(name)
         return 42
+
+    def acquire_name(self):
+        self.acquired(self.owned[-1])
+
+    def lose_name(self):
+        self.lost(self.owned[-1])
 
     def register_item(self, service):
         self.calls.append(service)
@@ -56,6 +70,37 @@ def test_status_notifier_exports_and_registers_with_watcher(tmp_path):
     assert bus.calls == [bus.owned[0]]
     assert bus.property_handler("IconName") == "warp-control-connected"
     assert bus.property_handler("IconThemePath") == str(tmp_path)
+    assert re.fullmatch(r"org\.kde\.StatusNotifierItem-\d+-\d+", bus.owned[0])
+
+
+def test_watcher_registration_waits_until_bus_name_is_acquired(tmp_path):
+    bus = FakeBus(auto_acquire=False)
+    item = StatusNotifierItem(
+        bus, lambda: None, lambda _x, _y: None, tmp_path / "state.svg"
+    )
+
+    assert item.start() is True
+    assert bus.calls == []
+
+    bus.acquire_name()
+
+    assert bus.calls == [bus.owned[0]]
+
+
+def test_name_loss_closes_item_and_reports_unavailability(tmp_path):
+    unavailable = []
+    bus = FakeBus()
+    item = StatusNotifierItem(
+        bus, lambda: None, lambda _x, _y: None, tmp_path / "state.svg"
+    )
+    item.set_unavailable_callback(lambda: unavailable.append(True))
+    item.start()
+
+    bus.lose_name()
+
+    assert unavailable == [True]
+    assert bus.unexports == [41]
+    assert bus.unowns == [42]
 
 
 def test_activate_toggles_panel_and_context_menu_uses_coordinates(tmp_path):
@@ -135,6 +180,26 @@ def test_partial_registration_is_rolled_back(tmp_path):
     )
 
     assert item.start() is False
+    assert bus.unexports == [41]
+    assert bus.unowns == [42]
+
+
+def test_asynchronous_watcher_registration_failure_reports_unavailable(tmp_path):
+    class BrokenRegistrationBus(FakeBus):
+        def register_item(self, service):
+            raise RuntimeError(service)
+
+    unavailable = []
+    bus = BrokenRegistrationBus(auto_acquire=False)
+    item = StatusNotifierItem(
+        bus, lambda: None, lambda _x, _y: None, tmp_path / "x.svg"
+    )
+    item.set_unavailable_callback(lambda: unavailable.append(True))
+    assert item.start() is True
+
+    bus.acquire_name()
+
+    assert unavailable == [True]
     assert bus.unexports == [41]
     assert bus.unowns == [42]
 
@@ -313,6 +378,49 @@ def test_tray_does_not_create_fallback_when_status_notifier_starts(tmp_path):
 
     assert tray.start(tmp_path / "initial.svg") is True
     assert fallback_created == []
+
+
+def test_tray_start_is_idempotent_without_leaking_notifier(tmp_path):
+    created = []
+
+    def factory(_icon):
+        backend = FakeBackend(True)
+        created.append(backend)
+        return backend
+
+    tray = TrayManager(factory, lambda: FakeBackend(True))
+
+    assert tray.start(tmp_path / "initial.svg") is True
+    assert tray.start(tmp_path / "changed.svg") is True
+
+    assert len(created) == 1
+    assert created[0].updated == [tmp_path / "changed.svg"]
+
+
+def test_tray_start_is_idempotent_after_selecting_fallback(tmp_path):
+    fallback = FakeBackend(True)
+    tray = TrayManager(lambda _icon: FakeBackend(False), lambda: fallback)
+
+    assert tray.start(tmp_path / "initial.svg") is True
+    assert tray.start(tmp_path / "changed.svg") is True
+
+    assert fallback.updated == [tmp_path / "changed.svg"]
+
+
+def test_status_notifier_name_loss_activates_tray_fallback(tmp_path):
+    bus = FakeBus()
+    fallback = FakeBackend(True)
+    tray = TrayManager(
+        lambda icon: StatusNotifierItem(
+            bus, lambda: None, lambda _x, _y: None, icon
+        ),
+        lambda: fallback,
+    )
+    tray.start(tmp_path / "initial.svg")
+
+    bus.lose_name()
+
+    assert tray.active_backend is fallback
 
 
 class ExplodingBackend(FakeBackend):

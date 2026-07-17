@@ -38,7 +38,7 @@ class TrayManager:
     def create_default(cls, actions: TrayActions) -> "TrayManager":
         try:
             bus = GioSessionBus.connect()
-        except (ImportError, RuntimeError):
+        except Exception:
             bus = None
 
         native_menu = NativeContextMenu.create_default(actions)
@@ -62,8 +62,15 @@ class TrayManager:
         path = Path(icon_path)
         self._last_icon = path
         self._closed = False
+        if self._active is not None:
+            return self.update_icon(path)
         try:
             self._notifier = self._notifier_factory(path)
+            set_callback = getattr(
+                self._notifier, "set_unavailable_callback", None
+            )
+            if set_callback is not None:
+                set_callback(self._notifier_unavailable)
             if self._notifier.start():
                 self._active = self._notifier
                 return True
@@ -102,6 +109,13 @@ class TrayManager:
             self._safe_close(self._notifier)
         self._active = None
         self._notifier = None
+
+    def _notifier_unavailable(self) -> None:
+        failed, self._notifier = self._notifier, None
+        if self._active is failed:
+            self._active = None
+        if self._last_icon is not None and self._active is None:
+            self._start_fallback(self._last_icon)
 
     def _start_fallback(self, path: Path) -> bool:
         try:

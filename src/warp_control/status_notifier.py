@@ -1,6 +1,7 @@
 """StatusNotifierItem implementation with an injectable D-Bus adapter."""
 
 import os
+from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple, Union
 
@@ -29,6 +30,8 @@ INTROSPECTION_XML = """
 </node>
 """.strip()
 
+_INSTANCE_IDS = count(1)
+
 
 class StatusNotifierItem:
     """Publish a state icon and compact-panel actions through StatusNotifierItem."""
@@ -47,11 +50,20 @@ class StatusNotifierItem:
         self._show_context_menu = show_context_menu
         self._icon_path = Path(icon_path).expanduser().resolve(strict=False)
         self._service_name = service_name or (
-            "org.kde.StatusNotifierItem.warp_control_{}".format(os.getpid())
+            "org.kde.StatusNotifierItem-{}-{}".format(
+                os.getpid(), next(_INSTANCE_IDS)
+            )
         )
         self._registration_id: Optional[int] = None
         self._owner_id: Optional[int] = None
         self._started = False
+        self._registered = False
+        self._ownership_failed = False
+        self._closing = False
+        self._on_unavailable: Callable[[], None] = lambda: None
+
+    def set_unavailable_callback(self, callback: Callable[[], None]) -> None:
+        self._on_unavailable = callback
 
     def start(self) -> bool:
         if self._started:
@@ -65,13 +77,40 @@ class StatusNotifierItem:
                 self._handle_method,
                 self._get_property,
             )
-            self._owner_id = self._bus.own_name(self._service_name)
-            self._bus.register_item(self._service_name)
+            self._started = True
+            self._owner_id = self._bus.own_name(
+                self._service_name,
+                self._name_acquired,
+                self._name_lost,
+            )
         except Exception:
             self.close()
             return False
-        self._started = True
+        if self._ownership_failed:
+            self.close()
+            return False
         return True
+
+    def _name_acquired(self, _name: str) -> None:
+        if not self._started:
+            return
+        try:
+            self._bus.register_item(self._service_name)
+        except Exception:
+            self._ownership_failed = True
+            # With Gio this callback is asynchronous, so start() has already
+            # returned and the tray manager must be told to activate fallback.
+            if self._owner_id is not None:
+                self.close()
+                self._on_unavailable()
+            return
+        self._registered = True
+
+    def _name_lost(self, _name: str) -> None:
+        if self._closing or not self._started:
+            return
+        self.close()
+        self._on_unavailable()
 
     def _handle_method(self, method_name: str, parameters: Tuple[int, int]) -> None:
         x, y = parameters
@@ -100,19 +139,26 @@ class StatusNotifierItem:
             self._bus.emit_signal(ITEM_PATH, ITEM_INTERFACE, "NewIcon")
 
     def close(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
         registration_id, self._registration_id = self._registration_id, None
         owner_id, self._owner_id = self._owner_id, None
         self._started = False
-        if registration_id is not None:
-            try:
-                self._bus.unexport(registration_id)
-            except Exception:
-                pass
-        if owner_id is not None:
-            try:
-                self._bus.unown_name(owner_id)
-            except Exception:
-                pass
+        self._registered = False
+        try:
+            if registration_id is not None:
+                try:
+                    self._bus.unexport(registration_id)
+                except Exception:
+                    pass
+            if owner_id is not None:
+                try:
+                    self._bus.unown_name(owner_id)
+                except Exception:
+                    pass
+        finally:
+            self._closing = False
 
 
 class GioSessionBus:
@@ -184,9 +230,19 @@ class GioSessionBus:
             path, interface_info, on_method_call, on_get_property, None
         )
 
-    def own_name(self, name):
+    def own_name(self, name, acquired, lost):
+        def on_acquired(_connection, acquired_name):
+            acquired(acquired_name)
+
+        def on_lost(_connection, lost_name):
+            lost(lost_name)
+
         return self._gio.bus_own_name_on_connection(
-            self._connection, name, self._gio.BusNameOwnerFlags.NONE, None, None
+            self._connection,
+            name,
+            self._gio.BusNameOwnerFlags.NONE,
+            on_acquired,
+            on_lost,
         )
 
     def register_item(self, service):
