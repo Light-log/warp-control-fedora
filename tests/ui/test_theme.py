@@ -63,3 +63,17 @@ def test_css_provider_binding_installs_once_and_moves_between_screens():
         ("remove", first_screen, provider),
         ("add", second_screen, provider, 600),
     ]
+
+
+def test_css_provider_binding_uninstall_is_idempotent():
+    provider = object()
+    screen = object()
+    removed = []
+    binding = ScreenProviderBinding(provider, 600)
+    binding.install(screen, lambda *_args: None, lambda *_args: None)
+
+    binding.uninstall(lambda old_screen, item: removed.append((old_screen, item)))
+    binding.uninstall(lambda *_args: removed.append(("duplicate",)))
+
+    assert removed == [(screen, provider)]
+    assert binding.screen is None

@@ -6,6 +6,7 @@ from warp_control.ui.presenters import (
     CONFIG_WIDTH,
     MODE_LABELS,
     UIActions,
+    preferred_supported_value,
     normalize_icon_path,
     present_state,
 )
@@ -60,3 +61,9 @@ def test_compact_panel_uses_gtk3_widget_naming_api():
 
     assert ".set_name(" in source
     assert ".set_widget_name(" not in source
+
+
+def test_preferred_setting_preserves_current_value_and_falls_back_safely():
+    assert preferred_supported_value("proxy", ("warp", "proxy")) == "proxy"
+    assert preferred_supported_value("dot", ("warp", "proxy")) == "warp"
+    assert preferred_supported_value("warp", ()) is None

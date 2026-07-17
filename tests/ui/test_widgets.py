@@ -101,13 +101,42 @@ def test_public_updates_and_callbacks_cover_hosts_state_and_capabilities():
     window.destroy()
 
 
+def test_mode_and_protocol_state_survives_capability_probe_failure():
+    window = MainWindow(Config(), UIActions())
+    supported = WarpCapabilities(
+        True, ("warp", "proxy"), ("MASQUE", "WireGuard"), "remove", ""
+    )
+    failed = WarpCapabilities(False, (), (), "remove", "probe failed")
+
+    window.set_capabilities(supported, current_mode="proxy", current_protocol="WireGuard")
+    assert window.settings.mode_combo.get_active_id() == "proxy"
+    assert window.settings.protocol_combo.get_active_id() == "WireGuard"
+
+    window.set_capabilities(failed)
+    assert window.settings.mode_combo.get_active_id() == "proxy"
+    assert window.settings.protocol_combo.get_active_id() == "WireGuard"
+
+    window.apply_connection_settings("warp", "MASQUE")
+    assert window.settings.mode_combo.get_active_id() == "warp"
+    assert window.settings.protocol_combo.get_active_id() == "MASQUE"
+    window.destroy()
+
+
+def test_destroy_uninstalls_css_provider():
+    window = MainWindow(Config(), UIActions())
+    window.destroy()
+
+    assert window._provider_binding.screen is None
+
+
 def test_exact_shipped_trash_svg_is_used_and_close_hides_window():
     window = MainWindow(Config(), UIActions())
     window.set_hosts(("example.com",))
     asset = Path("data/icons/edit-delete.svg")
     assert asset.is_file()
     assert "edit-delete-symbolic" not in asset.read_text(encoding="utf-8")
-    assert window.exclusions.delete_icon_path.resolve() == asset.resolve()
+    assert window.exclusions.delete_icon_path.name == asset.name
+    assert window.exclusions.delete_icon_path.read_bytes() == asset.read_bytes()
 
     window.show_all()
     stopped = window.emit("delete-event", None)

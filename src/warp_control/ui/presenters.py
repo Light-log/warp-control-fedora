@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Union
+from typing import Callable, Iterable, Optional, Union
 
 from warp_control.models import WarpState
 
@@ -23,6 +23,15 @@ MODE_LABELS = {
 
 def normalize_icon_path(path: Union[Path, str]) -> str:
     return os.fspath(path)
+
+
+def preferred_supported_value(
+    current: Optional[str], available: Iterable[str]
+) -> Optional[str]:
+    values = tuple(available)
+    if current in values:
+        return current
+    return values[0] if values else None
 
 
 def _noop(*args: object) -> None:

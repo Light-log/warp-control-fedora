@@ -3,27 +3,31 @@
 # ruff: noqa: E402 -- gi.require_version must precede repository imports.
 
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple, Union
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
+from warp_control.ui.assets import runtime_asset_path
 from warp_control.ui.presenters import CONFIG_CONTENT_HEIGHT, UIActions
 
 
 VIEWPORT_HEIGHT = CONFIG_CONTENT_HEIGHT
-_REPOSITORY_ASSET = (
-    Path(__file__).resolve().parents[3] / "data" / "icons" / "edit-delete.svg"
-)
-
-
 class ExclusionsPage(Gtk.ScrolledWindow):
-    def __init__(self, actions: UIActions, delete_icon_path: Path = _REPOSITORY_ASSET) -> None:
+    def __init__(
+        self,
+        actions: UIActions,
+        delete_icon_path: Optional[Union[Path, str]] = None,
+    ) -> None:
         super().__init__()
         self.actions = actions
-        self.delete_icon_path = Path(delete_icon_path)
+        self.delete_icon_path = (
+            Path(delete_icon_path)
+            if delete_icon_path is not None
+            else runtime_asset_path("edit-delete.svg")
+        )
         self.hosts: Tuple[str, ...] = ()
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.set_size_request(-1, VIEWPORT_HEIGHT)

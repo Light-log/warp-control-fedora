@@ -2,7 +2,7 @@
 
 # ruff: noqa: E402 -- gi.require_version must precede repository imports.
 
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 import gi
 
@@ -11,12 +11,19 @@ from gi.repository import Gtk
 
 from warp_control.config import Config
 from warp_control.models import WarpCapabilities
-from warp_control.ui.presenters import CONFIG_CONTENT_HEIGHT, MODE_LABELS, UIActions
+from warp_control.ui.presenters import (
+    CONFIG_CONTENT_HEIGHT,
+    MODE_LABELS,
+    UIActions,
+    preferred_supported_value,
+)
 
 
 VIEWPORT_HEIGHT = CONFIG_CONTENT_HEIGHT
 KNOWN_MODES = ("warp", "warp+doh", "warp+dot", "doh", "dot", "tunnel_only", "proxy")
 KNOWN_PROTOCOLS = ("MASQUE", "WireGuard")
+
+
 class SettingsPage(Gtk.ScrolledWindow):
     def __init__(self, config: Config, actions: UIActions) -> None:
         super().__init__()
@@ -24,6 +31,8 @@ class SettingsPage(Gtk.ScrolledWindow):
         self._updating = False
         self.available_modes: Tuple[str, ...] = KNOWN_MODES
         self.available_protocols: Tuple[str, ...] = KNOWN_PROTOCOLS
+        self.current_mode: Optional[str] = None
+        self.current_protocol: Optional[str] = None
         self.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.set_size_request(-1, VIEWPORT_HEIGHT)
 
@@ -118,8 +127,18 @@ class SettingsPage(Gtk.ScrolledWindow):
         combo.set_active(0 if combo.get_model() and len(combo.get_model()) else -1)
 
     def set_capabilities_values(
-        self, modes: Iterable[str], protocols: Iterable[str]
+        self,
+        modes: Iterable[str],
+        protocols: Iterable[str],
+        current_mode: Optional[str] = None,
+        current_protocol: Optional[str] = None,
     ) -> None:
+        if current_mode is None:
+            current_mode = self.current_mode or self.mode_combo.get_active_id()
+        if current_protocol is None:
+            current_protocol = (
+                self.current_protocol or self.protocol_combo.get_active_id()
+            )
         self.available_modes = tuple(value for value in KNOWN_MODES if value in modes)
         self.available_protocols = tuple(
             value for value in KNOWN_PROTOCOLS if value in protocols
@@ -127,12 +146,46 @@ class SettingsPage(Gtk.ScrolledWindow):
         self._updating = True
         self._populate(self.mode_combo, self.available_modes, MODE_LABELS)
         self._populate(self.protocol_combo, self.available_protocols)
+        self.current_mode = preferred_supported_value(
+            current_mode, self.available_modes
+        )
+        self.current_protocol = preferred_supported_value(
+            current_protocol, self.available_protocols
+        )
+        self.mode_combo.set_active_id(self.current_mode)
+        self.protocol_combo.set_active_id(self.current_protocol)
         self.mode_combo.set_sensitive(bool(self.available_modes))
         self.protocol_combo.set_sensitive(bool(self.available_protocols))
         self._updating = False
 
-    def set_capabilities(self, capabilities: WarpCapabilities) -> None:
-        self.set_capabilities_values(capabilities.modes, capabilities.protocols)
+    def set_capabilities(
+        self,
+        capabilities: WarpCapabilities,
+        current_mode: Optional[str] = None,
+        current_protocol: Optional[str] = None,
+    ) -> None:
+        if not capabilities.ok:
+            if current_mode is not None or current_protocol is not None:
+                self.apply_current_settings(current_mode, current_protocol)
+            return
+        self.set_capabilities_values(
+            capabilities.modes,
+            capabilities.protocols,
+            current_mode,
+            current_protocol,
+        )
+
+    def apply_current_settings(
+        self, mode: Optional[str], protocol: Optional[str]
+    ) -> None:
+        self._updating = True
+        if mode is not None:
+            self.current_mode = mode
+            self.mode_combo.set_active_id(mode)
+        if protocol is not None:
+            self.current_protocol = protocol
+            self.protocol_combo.set_active_id(protocol)
+        self._updating = False
 
     def apply_config(self, config: Config) -> None:
         self._updating = True
@@ -145,9 +198,11 @@ class SettingsPage(Gtk.ScrolledWindow):
     def _on_mode_changed(self, combo: Gtk.ComboBoxText) -> None:
         value = combo.get_active_id()
         if not self._updating and value is not None:
+            self.current_mode = value
             self.actions.on_mode_changed(value)
 
     def _on_protocol_changed(self, combo: Gtk.ComboBoxText) -> None:
         value = combo.get_active_id()
         if not self._updating and value is not None:
+            self.current_protocol = value
             self.actions.on_protocol_changed(value)

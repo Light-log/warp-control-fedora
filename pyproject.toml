@@ -15,6 +15,9 @@ warp-control = "warp_control.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"warp_control.assets" = ["*.svg"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 markers = [

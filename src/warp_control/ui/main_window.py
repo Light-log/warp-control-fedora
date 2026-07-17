@@ -29,6 +29,7 @@ class MainWindow(Gtk.Window):
         self.set_default_size(CONFIG_WIDTH, 570)
         self.set_resizable(False)
         self.connect("delete-event", self._on_delete_event)
+        self.connect("destroy", self._on_destroy)
         self._css_provider = Gtk.CssProvider()
         self._provider_binding = ScreenProviderBinding(
             self._css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
@@ -92,11 +93,21 @@ class MainWindow(Gtk.Window):
         self.hide()
         return True
 
+    def _on_destroy(self, _window: Gtk.Window) -> None:
+        self._provider_binding.uninstall(
+            Gtk.StyleContext.remove_provider_for_screen
+        )
+
+    def _select_view(self, name: str) -> None:
+        child = self.stack.get_child_by_name(name)
+        child.show()
+        self.stack.set_visible_child(child)
+
     def show_compact(self) -> None:
-        self.stack.set_visible_child_name("compact")
+        self._select_view("compact")
 
     def show_configuration(self) -> None:
-        self.stack.set_visible_child_name("configuration")
+        self._select_view("configuration")
 
     def show_settings(self) -> None:
         self.show_configuration()
@@ -136,5 +147,17 @@ class MainWindow(Gtk.Window):
     def set_hosts(self, hosts: Iterable[str]) -> None:
         self.exclusions.set_hosts(hosts)
 
-    def set_capabilities(self, capabilities: WarpCapabilities) -> None:
-        self.settings.set_capabilities(capabilities)
+    def set_capabilities(
+        self,
+        capabilities: WarpCapabilities,
+        current_mode: Optional[str] = None,
+        current_protocol: Optional[str] = None,
+    ) -> None:
+        self.settings.set_capabilities(
+            capabilities, current_mode, current_protocol
+        )
+
+    def apply_connection_settings(
+        self, mode: Optional[str], protocol: Optional[str]
+    ) -> None:
+        self.settings.apply_current_settings(mode, protocol)

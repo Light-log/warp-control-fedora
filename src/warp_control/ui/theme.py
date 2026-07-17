@@ -52,6 +52,12 @@ class ScreenProviderBinding:
         if screen is not None:
             add_provider(screen, self.provider, self.priority)
 
+    def uninstall(self, remove_provider) -> None:
+        if self.screen is None:
+            return
+        remove_provider(self.screen, self.provider)
+        self.screen = None
+
 
 def palette_for(theme: str) -> Palette:
     return LIGHT_PALETTE if theme == "light" else DARK_PALETTE
