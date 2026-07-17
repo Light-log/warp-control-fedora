@@ -17,12 +17,15 @@ Decisiones principales:
 ## Estado de implementación (2026-07-17)
 
 - Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-- Tasks 1–5 terminadas y aprobadas mediante revisión de especificación y calidad.
+- Tasks 1–7 terminadas y aprobadas mediante revisión de especificación y calidad.
 - Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
 - Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
 - `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
 - `WarpService` detecta capacidades de versiones nuevas y heredadas, aplica cambios con rollback seguro y nunca construye shell.
 - Iconos Cloudflare de dos colores y autostart XDG se generan de forma atómica con rutas validadas.
 - La ventana GTK única incluye panel compacto y tabs Exclusiones/Apariencia/Ajustes; conserva modo/protocolo, limpia proveedores CSS y carga SVG empaquetados.
-- Verificación actual: 148 pruebas aprobadas (más pruebas GTK reales en revisión), Ruff limpio y wheel con ambos SVG validado.
-- Siguiente tarea: Task 6, StatusNotifierItem y fallback AyatanaAppIndicator.
+- StatusNotifierItem adquiere el nombre D-Bus antes de registrarse, abre panel/menú y degrada a AyatanaAppIndicator sin fugas.
+- El controlador serializa mutaciones WARP, descarta snapshots obsoletos, hace rollback de configuración y evita procesos ocultos sin bandeja.
+- Logs rotativos solo guardan metadatos; `--smoke-test` funciona sin pantalla, D-Bus ni `warp-cli`.
+- Verificación actual: 196 pruebas aprobadas localmente (203 con display en revisión), Ruff limpio y wheel con SVG empaquetados validado.
+- Siguiente tarea: Task 8, detección multidistro y planes de instalación.
