@@ -6,17 +6,13 @@ from warp_control.installers import installation_plan
 from warp_control.installers.debian import debian_plan
 from warp_control.installers.detector import Architecture, Distribution, SystemInfo
 from warp_control.installers.fedora import fedora_plan
-from warp_control.installers.models import InstallAction, OfficialSource
+from warp_control.installers.models import (
+    PRIVILEGED_ACTIONS,
+    InstallAction,
+    InstallPlan,
+    OfficialSource,
+)
 from warp_control.installers.rhel import rhel_plan
-
-
-PRIVILEGED_ACTIONS = {
-    InstallAction.ADD_CLOUDFLARE_REPOSITORY,
-    InstallAction.INSTALL_EPEL,
-    InstallAction.REFRESH_PACKAGE_METADATA,
-    InstallAction.INSTALL_CLOUDFLARE_WARP,
-    InstallAction.ENABLE_WARP_SERVICE,
-}
 
 
 def system(distribution, version, codename=None, arch=Architecture.AMD64):
@@ -61,7 +57,7 @@ def test_supported_debian_plan(version, codename):
     assert plan.actions[0] is InstallAction.ADD_CLOUDFLARE_REPOSITORY
 
 
-@pytest.mark.parametrize("version", ["9", "9.6", "10", "10.1"])
+@pytest.mark.parametrize("version", ["9", "9.6", "9.0.1", "10", "10.1"])
 def test_supported_rhel_plan_includes_epel(version):
     plan = installation_plan(system(Distribution.RHEL, version))
 
@@ -73,6 +69,17 @@ def test_supported_rhel_plan_includes_epel(version):
         InstallAction.INSTALL_CLOUDFLARE_WARP,
         InstallAction.ENABLE_WARP_SERVICE,
     )
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["9.", "10.", "9.evil", "10.1x", "09", "10-1", " 9", "9 ", "9..1"],
+)
+def test_rhel_plan_rejects_malformed_version_ids(version):
+    plan = rhel_plan(system(Distribution.RHEL, version))
+
+    assert plan.supported is False
+    assert not PRIVILEGED_ACTIONS.intersection(plan.actions)
 
 
 @pytest.mark.parametrize(
@@ -126,6 +133,28 @@ def test_upstream_sources_are_a_closed_allowlist():
         "https://pkg.cloudflareclient.com/pubkey.gpg",
         "https://pkg.cloudflareclient.com/",
     }
+
+
+def test_install_plan_copies_action_sequences_to_an_immutable_tuple():
+    supplied = [InstallAction.SHOW_MANUAL_INSTRUCTIONS]
+
+    plan = InstallPlan(False, "No soportado", supplied)
+    supplied.append(InstallAction.SHOW_COMMUNITY_INSTRUCTIONS)
+
+    assert plan.actions == (InstallAction.SHOW_MANUAL_INSTRUCTIONS,)
+    assert isinstance(plan.actions, tuple)
+
+
+@pytest.mark.parametrize("invalid", ["install_epel", object(), 1, None])
+def test_install_plan_rejects_non_enum_actions(invalid):
+    with pytest.raises((TypeError, ValueError)):
+        InstallPlan(True, None, (invalid,))
+
+
+@pytest.mark.parametrize("action", sorted(PRIVILEGED_ACTIONS, key=lambda item: item.value))
+def test_unsupported_install_plan_rejects_every_privileged_action(action):
+    with pytest.raises(ValueError, match="privilegiada"):
+        InstallPlan(False, "No soportado", (action,))
 
 
 @pytest.mark.parametrize(

@@ -15,6 +15,17 @@ class InstallAction(str, Enum):
     SHOW_MANUAL_INSTRUCTIONS = "show_manual_instructions"
 
 
+PRIVILEGED_ACTIONS = frozenset(
+    (
+        InstallAction.INSTALL_EPEL,
+        InstallAction.ADD_CLOUDFLARE_REPOSITORY,
+        InstallAction.REFRESH_PACKAGE_METADATA,
+        InstallAction.INSTALL_CLOUDFLARE_WARP,
+        InstallAction.ENABLE_WARP_SERVICE,
+    )
+)
+
+
 class OfficialSource(str, Enum):
     """Allowlisted upstream locations; plans never accept caller-provided URLs."""
 
@@ -28,3 +39,14 @@ class InstallPlan:
     supported: bool
     warning: Optional[str]
     actions: Tuple[InstallAction, ...]
+
+    def __post_init__(self) -> None:
+        try:
+            actions = tuple(self.actions)
+        except TypeError as error:
+            raise TypeError("actions must be an iterable of InstallAction") from error
+        if not all(isinstance(action, InstallAction) for action in actions):
+            raise TypeError("every action must be an InstallAction enum member")
+        if not self.supported and PRIVILEGED_ACTIONS.intersection(actions):
+            raise ValueError("un plan no soportado no puede contener una acción privilegiada")
+        object.__setattr__(self, "actions", actions)

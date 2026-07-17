@@ -1,3 +1,5 @@
+import re
+
 from .detector import Architecture, Distribution, SystemInfo
 from .models import InstallAction, InstallPlan
 
@@ -9,6 +11,7 @@ _OFFICIAL_ACTIONS = (
     InstallAction.INSTALL_CLOUDFLARE_WARP,
     InstallAction.ENABLE_WARP_SERVICE,
 )
+_SUPPORTED_VERSION = re.compile(r"^(?:9|10)(?:\.[0-9]+)*$")
 
 
 def rhel_plan(system: SystemInfo) -> InstallPlan:
@@ -18,10 +21,10 @@ def rhel_plan(system: SystemInfo) -> InstallPlan:
             "El plan de RHEL recibió otra distribución; no se realizará ninguna acción.",
             (),
         )
-    major_version = system.version.split(".", 1)[0] if system.version else ""
     if (
         system.architecture in (Architecture.AMD64, Architecture.ARM64)
-        and major_version in ("9", "10")
+        and system.version is not None
+        and _SUPPORTED_VERSION.fullmatch(system.version)
     ):
         return InstallPlan(True, None, _OFFICIAL_ACTIONS)
     return InstallPlan(

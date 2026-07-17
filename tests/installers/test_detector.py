@@ -5,6 +5,11 @@ import pytest
 from warp_control.installers.detector import (
     Architecture,
     Distribution,
+    MAX_OS_RELEASE_BYTES,
+    MAX_OS_RELEASE_KEY_LENGTH,
+    MAX_OS_RELEASE_LINE_COUNT,
+    MAX_OS_RELEASE_LINE_LENGTH,
+    MAX_OS_RELEASE_VALUE_LENGTH,
     OsReleaseError,
     detect_system,
     normalize_architecture,
@@ -114,3 +119,36 @@ def test_detect_system_fails_closed_when_os_release_is_missing(tmp_path):
 
     assert system.distribution is Distribution.UNKNOWN
     assert system.architecture is Architecture.AMD64
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A" * (MAX_OS_RELEASE_BYTES + 1),
+        "\n".join("A=1" for _ in range(MAX_OS_RELEASE_LINE_COUNT + 1)),
+        "A" * (MAX_OS_RELEASE_KEY_LENGTH + 1) + "=1",
+        "ID=" + "a" * (MAX_OS_RELEASE_VALUE_LENGTH + 1),
+        "ID=" + "a" * MAX_OS_RELEASE_LINE_LENGTH,
+    ],
+)
+def test_parse_os_release_rejects_bounded_input_limits(text):
+    with pytest.raises(OsReleaseError):
+        parse_os_release(text)
+
+
+def test_detect_system_reads_at_most_the_bounded_file_size(tmp_path):
+    path = tmp_path / "os-release"
+    path.write_bytes(b"ID=fedora\nVERSION_ID=44\n" + b"#" * MAX_OS_RELEASE_BYTES)
+
+    system = detect_system(path, machine="x86_64")
+
+    assert system.distribution is Distribution.UNKNOWN
+
+
+def test_detect_system_rejects_non_utf8_os_release(tmp_path):
+    path = tmp_path / "os-release"
+    path.write_bytes(b"ID=fedora\nVERSION_ID=44\n\xff")
+
+    system = detect_system(path, machine="x86_64")
+
+    assert system.distribution is Distribution.UNKNOWN

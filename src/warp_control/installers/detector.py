@@ -9,6 +9,12 @@ from typing import Dict, Optional
 _KEY = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _UNQUOTED_VALUE = re.compile(r"^[A-Za-z0-9._+:/@%-]*$")
 
+MAX_OS_RELEASE_BYTES = 64 * 1024
+MAX_OS_RELEASE_LINE_COUNT = 256
+MAX_OS_RELEASE_LINE_LENGTH = 4096
+MAX_OS_RELEASE_KEY_LENGTH = 128
+MAX_OS_RELEASE_VALUE_LENGTH = 4096
+
 
 class OsReleaseError(ValueError):
     pass
@@ -85,17 +91,39 @@ def _decode_value(value: str) -> str:
 def parse_os_release(text: str) -> Dict[str, str]:
     """Parse os-release assignments as data, never as shell source."""
 
+    if len(text) > MAX_OS_RELEASE_BYTES:
+        raise OsReleaseError("os-release exceeds the size limit")
+    try:
+        encoded_size = len(text.encode("utf-8", errors="strict"))
+    except UnicodeError as error:
+        raise OsReleaseError("os-release is not valid UTF-8") from error
+    if encoded_size > MAX_OS_RELEASE_BYTES:
+        raise OsReleaseError("os-release exceeds the size limit")
+
+    lines = text.splitlines()
+    if len(lines) > MAX_OS_RELEASE_LINE_COUNT:
+        raise OsReleaseError("os-release has too many lines")
+
     result: Dict[str, str] = {}
-    for raw_line in text.splitlines():
+    for raw_line in lines:
+        if len(raw_line) > MAX_OS_RELEASE_LINE_LENGTH:
+            raise OsReleaseError("os-release line exceeds the length limit")
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
             raise OsReleaseError("os-release line is not an assignment")
         key, value = line.split("=", 1)
+        if len(key) > MAX_OS_RELEASE_KEY_LENGTH:
+            raise OsReleaseError("os-release key exceeds the length limit")
+        if len(value) > MAX_OS_RELEASE_VALUE_LENGTH:
+            raise OsReleaseError("os-release value exceeds the length limit")
         if not _KEY.fullmatch(key) or key in result:
             raise OsReleaseError("invalid or duplicate os-release key")
-        result[key] = _decode_value(value)
+        decoded_value = _decode_value(value)
+        if len(decoded_value) > MAX_OS_RELEASE_VALUE_LENGTH:
+            raise OsReleaseError("decoded os-release value exceeds the length limit")
+        result[key] = decoded_value
     return result
 
 
@@ -118,7 +146,11 @@ def detect_system(
 ) -> SystemInfo:
     architecture = normalize_architecture(machine if machine is not None else platform.machine())
     try:
-        values = parse_os_release(os_release_path.read_text(encoding="utf-8"))
+        with os_release_path.open("rb") as os_release_file:
+            contents = os_release_file.read(MAX_OS_RELEASE_BYTES + 1)
+        if len(contents) > MAX_OS_RELEASE_BYTES:
+            raise OsReleaseError("os-release exceeds the size limit")
+        values = parse_os_release(contents.decode("utf-8", errors="strict"))
     except (OSError, UnicodeError, OsReleaseError):
         return SystemInfo(Distribution.UNKNOWN, None, None, architecture)
 
