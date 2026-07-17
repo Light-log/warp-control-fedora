@@ -2,6 +2,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import warp_control.app as app_module
+import pytest
 
 from warp_control.config import Config
 from warp_control.models import (
@@ -168,12 +169,21 @@ class FakeTray:
 class FakeAutostart:
     def __init__(self):
         self.calls = []
+        self.enabled = False
+        self.fail = False
 
     def enable(self):
         self.calls.append("enable")
+        if self.fail:
+            raise OSError("private-host.example/user-id-42")
+        self.enabled = True
 
     def disable(self):
         self.calls.append("disable")
+        self.enabled = False
+
+    def is_enabled(self):
+        return self.enabled
 
 
 class FakeDiagnostics:
@@ -243,6 +253,35 @@ def test_auto_update_switch_and_interval_persist_and_reschedule(tmp_path):
     assert window.configs[-1].auto_update_enabled is True
 
 
+def test_first_start_installs_default_autostart_without_disabling_opt_out(tmp_path):
+    controller, _config, _tasks, _scheduler, _window, *_rest = make_controller(
+        tmp_path
+    )
+    controller.start(background=True)
+    controller.start(background=True)
+    assert controller.autostart.calls == ["enable"]
+
+    controller2, config2, _tasks, _scheduler, _window, *_rest = make_controller(
+        tmp_path / "opt-out"
+    )
+    config2.autostart_enabled = False
+    controller2.start(background=True)
+    assert controller2.autostart.calls == []
+
+
+def test_failed_startup_autostart_sync_reflects_actual_disabled_state(tmp_path):
+    controller, config, _tasks, _scheduler, window, *_rest = make_controller(
+        tmp_path
+    )
+    controller.autostart.fail = True
+
+    controller.start(background=True)
+
+    assert config.autostart_enabled is False
+    assert Config.load(config.path).autostart_enabled is False
+    assert window.configs[-1].autostart_enabled is False
+
+
 def test_ui_actions_connect_all_mutations_and_host_expansion(tmp_path):
     controller, config, tasks, _scheduler, _window, warp, _tray = make_controller(
         tmp_path
@@ -275,7 +314,7 @@ def test_failed_mode_change_restores_previous_ui_selection(tmp_path):
 
 
 def test_connection_action_uses_current_state_and_refreshes_after_completion(tmp_path):
-    controller, _config, tasks, _scheduler, window, warp, _tray = make_controller(
+    controller, _config, tasks, _scheduler, window, warp, tray = make_controller(
         tmp_path
     )
     controller._apply_snapshot(  # establish the displayed state
@@ -286,6 +325,8 @@ def test_connection_action_uses_current_state_and_refreshes_after_completion(tmp
 
     controller.toggle_connection()
     assert window.states[-1][0] is WarpState.CONNECTING
+    assert window.states[-1][1].name == "connecting.svg"
+    assert tray.updated[-1].name == "connecting.svg"
     tasks.complete_next()
     assert "disconnect" in warp.calls
     assert len(tasks.pending) == 1
@@ -325,3 +366,87 @@ def test_cli_bootstrap_is_injectable_and_always_shuts_down(monkeypatch, tmp_path
 
     assert app_module.main(["--background"]) == 0
     assert events == [("start", True), ("main",), ("shutdown",)]
+
+
+def test_real_smoke_test_is_headless_and_does_not_probe_system_services(
+    monkeypatch,
+):
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    assert app_module.run_smoke_test() == 0
+
+
+def test_cli_smoke_test_bypasses_gtk_runtime(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_build_runtime",
+        lambda _config: (_ for _ in ()).throw(AssertionError("GTK used")),
+    )
+    assert app_module.main(["--smoke-test"]) == 0
+
+
+def test_cli_help_exits_zero_without_building_runtime(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_build_runtime",
+        lambda _config: (_ for _ in ()).throw(AssertionError("runtime used")),
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        app_module.main(["--help"])
+    assert exit_info.value.code == 0
+
+
+def test_cli_runtime_error_still_shuts_down(monkeypatch, tmp_path, capsys):
+    events = []
+
+    class BrokenController:
+        def start(self, *, background=False):
+            raise RuntimeError("secret.example/device-123")
+
+        def shutdown(self):
+            events.append("shutdown")
+
+    class FakeGtk:
+        @staticmethod
+        def main():
+            raise AssertionError("unreachable")
+
+    monkeypatch.setattr(
+        app_module.Config, "load", lambda: Config(path=tmp_path / "config.json")
+    )
+    monkeypatch.setattr(
+        app_module, "_build_runtime", lambda _config: (BrokenController(), FakeGtk)
+    )
+
+    assert app_module.main([]) == 1
+    assert events == ["shutdown"]
+    assert "secret.example" not in capsys.readouterr().err
+
+
+def test_controller_logs_only_structured_result_metadata(tmp_path):
+    class RecordingLogger:
+        def __init__(self):
+            self.records = []
+
+        def info(self, message, *args):
+            self.records.append((message, args))
+
+        def error(self, message, *args):
+            self.records.append((message, args))
+
+        def warning(self, message, *args):
+            self.records.append((message, args))
+
+    controller, *_rest = make_controller(tmp_path)
+    logger = RecordingLogger()
+    controller.logger = logger
+    secret = "customer.example/device-id-42 token=private"
+
+    controller._log_result("operation", OperationResult(False, secret, 7))
+    controller._operation_failed(RuntimeError(secret))
+
+    serialized = repr(logger.records)
+    assert "customer.example" not in serialized
+    assert "device-id-42" not in serialized
+    assert "private" not in serialized
+    assert "returncode" in serialized

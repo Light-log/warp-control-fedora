@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,7 @@ class ApplicationController:
         self._state = WarpState.UNKNOWN
         self._mode: Optional[str] = None
         self._protocol: Optional[str] = None
+        self._autostart_synchronized = False
 
     def ui_actions(self) -> UIActions:
         return UIActions(
@@ -85,6 +87,7 @@ class ApplicationController:
         )
 
     def start(self, *, background: bool = False) -> None:
+        self._sync_initial_autostart()
         self.window.apply_config(self.config)
         initial_icon = self._render_icon(WarpState.UNKNOWN)
         if initial_icon is not None:
@@ -96,6 +99,26 @@ class ApplicationController:
         self.refresh()
         if not background:
             self.show_panel()
+
+    def _sync_initial_autostart(self) -> None:
+        """Create the default entry, while preserving an explicit opt-out."""
+        if self._autostart_synchronized or not self.config.autostart_enabled:
+            return
+        self._autostart_synchronized = True
+        try:
+            self.autostart.enable()
+        except (OSError, ValueError) as error:
+            actual = False
+            try:
+                actual = bool(self.autostart.is_enabled())
+            except (OSError, ValueError):
+                pass
+            self.config.autostart_enabled = actual
+            self.config.save()
+            self.logger.error(
+                "autostart synchronization failed error_type=%s",
+                type(error).__name__,
+            )
 
     def refresh(self) -> bool:
         if self._shutdown or self.refreshing:
@@ -126,7 +149,9 @@ class ApplicationController:
 
     def _refresh_failed(self, error: Exception) -> None:
         self.refreshing = False
-        self.logger.error("refresh failed: %s", error)
+        self.logger.error(
+            "refresh failed error_type=%s", type(error).__name__
+        )
         if not self._shutdown:
             self._state = WarpState.ERROR
             icon = self._render_icon(WarpState.ERROR)
@@ -161,7 +186,10 @@ class ApplicationController:
     def toggle_connection(self) -> None:
         disconnect = self._state is WarpState.CONNECTED
         self._state = WarpState.CONNECTING
-        self.window.apply_state(WarpState.CONNECTING)
+        icon = self._render_icon(WarpState.CONNECTING)
+        self.window.apply_state(WarpState.CONNECTING, icon)
+        if icon is not None:
+            self.tray.update_icon(icon)
         operation = self.warp.disconnect if disconnect else self.warp.connect
         self._submit_operation(operation, refresh=True)
 
@@ -169,7 +197,9 @@ class ApplicationController:
         try:
             rules = expand_host_rule(value, include_subdomains)
         except ValueError as error:
-            self.logger.warning("invalid host rule: %s", error)
+            self.logger.warning(
+                "invalid host rule error_type=%s", type(error).__name__
+            )
             return
 
         def worker() -> OperationResult:
@@ -279,13 +309,19 @@ class ApplicationController:
         self.tasks.submit(worker, complete, self._operation_failed)
 
     def _operation_failed(self, error: Exception) -> None:
-        self.logger.error("background operation failed: %s", error)
+        self.logger.error(
+            "background operation failed error_type=%s", type(error).__name__
+        )
         self.refresh()
 
     def _log_result(self, action: str, result: OperationResult) -> None:
         method = self.logger.info if result.ok else self.logger.error
-        method("%s ok=%s returncode=%s output=%s", action, result.ok,
-               result.returncode, result.output)
+        method(
+            "action=%s ok=%s returncode=%s",
+            action,
+            result.ok,
+            result.returncode,
+        )
 
     def set_theme(self, theme: str) -> None:
         if theme not in {"light", "dark"}:
@@ -320,7 +356,9 @@ class ApplicationController:
         try:
             self.autostart.enable() if enabled else self.autostart.disable()
         except (OSError, ValueError) as error:
-            self.logger.error("autostart change failed: %s", error)
+            self.logger.error(
+                "autostart change failed error_type=%s", type(error).__name__
+            )
             self.window.apply_config(self.config)
             return
         self.config.autostart_enabled = bool(enabled)
@@ -351,7 +389,9 @@ class ApplicationController:
         try:
             return Path(self.icons.render(state, self.config))
         except (OSError, ValueError) as error:
-            self.logger.error("icon render failed: %s", error)
+            self.logger.error(
+                "icon render failed error_type=%s", type(error).__name__
+            )
             return None
 
     def _reschedule(self) -> None:
@@ -471,19 +511,77 @@ def _action_proxy(holder: dict) -> UIActions:
     )
 
 
+def run_smoke_test() -> int:
+    """Exercise the headless dependency graph without probing host services."""
+    from warp_control.commands import CommandRunner
+    from warp_control.services.diagnostics import configure_logging
+    from warp_control.services.icons import IconRenderer
+    from warp_control.services.warp import WarpService
+    from warp_control.ui.assets import runtime_asset_path
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="warp-control-smoke-") as directory:
+            root = Path(directory)
+            config = Config(path=root / "config.json")
+            config.save()
+            icon = IconRenderer(
+                runtime_asset_path("cloudflare-template.svg"), root / "icons"
+            ).render(WarpState.DISCONNECTED, config)
+            if not icon.is_file():
+                raise RuntimeError("icon rendering did not create a file")
+
+            status = WarpService(
+                CommandRunner(), executable=lambda: None
+            ).status()
+            if status.returncode != 127:
+                raise RuntimeError("missing executable contract changed")
+
+            logger = configure_logging(
+                root / "warp-control.log",
+                logger_name="warp_control.smoke_test",
+            )
+            logger.info("smoke_test=ok")
+            for handler in tuple(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+    except Exception as error:
+        print(
+            f"Smoke test falló ({type(error).__name__})",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Control gráfico de Cloudflare WARP")
     parser.add_argument("--background", action="store_true")
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="comprueba el arranque sin abrir GTK ni acceder a servicios del host",
+    )
     options = parser.parse_args(argv)
-    config = Config.load()
+    if options.smoke_test:
+        return run_smoke_test()
     try:
+        config = Config.load()
         controller, gtk = _build_runtime(config)
     except Exception as error:
-        print(f"No se pudo iniciar WARP Control: {error}", file=sys.stderr)
+        print(
+            f"No se pudo iniciar WARP Control ({type(error).__name__})",
+            file=sys.stderr,
+        )
         return 1
     try:
         controller.start(background=options.background)
         gtk.main()
+    except Exception as error:
+        print(
+            f"WARP Control terminó con error ({type(error).__name__})",
+            file=sys.stderr,
+        )
+        return 1
     finally:
         controller.shutdown()
     return 0
