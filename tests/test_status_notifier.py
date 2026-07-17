@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from warp_control.app_indicator import AppIndicatorFallback
+from warp_control.app_indicator import AppIndicatorFallback, NativeContextMenu
 from warp_control.status_notifier import StatusNotifierItem
 from warp_control.tray import TrayActions, TrayManager
 
@@ -177,6 +177,9 @@ class FakeMenu(FakeWidget):
     def append(self, item):
         self.children.append(item)
 
+    def popup_at_pointer(self, event):
+        self.popup_event = event
+
 
 class FakeGtk:
     Menu = FakeMenu
@@ -228,7 +231,6 @@ def test_app_indicator_fallback_has_only_native_expected_menu_items(tmp_path):
             toggle_panel=lambda: actions.append("open"),
             refresh=lambda: actions.append("refresh"),
             quit=lambda: actions.append("quit"),
-            show_context_menu=lambda _x, _y: None,
         ),
     )
     icon = tmp_path / "warp-control-connected.svg"
@@ -245,6 +247,29 @@ def test_app_indicator_fallback_has_only_native_expected_menu_items(tmp_path):
     assert actions == ["open"]
     assert indicator.theme_path == str(tmp_path)
     assert indicator.icon[0] == icon.stem
+
+
+def test_native_context_menu_has_actions_and_uses_gtk_popup():
+    actions = []
+    menu = NativeContextMenu(
+        FakeGtk,
+        TrayActions(
+            toggle_panel=lambda: actions.append("open"),
+            refresh=lambda: actions.append("refresh"),
+            quit=lambda: actions.append("quit"),
+        ),
+    )
+
+    menu.show(20, 30)
+    menu.widget.children[1].callbacks["activate"](menu.widget.children[1])
+
+    assert [item.label for item in menu.widget.children] == [
+        "Abrir panel",
+        "Actualizar",
+        "Salir",
+    ]
+    assert menu.widget.popup_event is None
+    assert actions == ["refresh"]
 
 
 class FakeBackend:
@@ -288,3 +313,52 @@ def test_tray_does_not_create_fallback_when_status_notifier_starts(tmp_path):
 
     assert tray.start(tmp_path / "initial.svg") is True
     assert fallback_created == []
+
+
+class ExplodingBackend(FakeBackend):
+    def __init__(self, *, start=False, update=False, close=False):
+        super().__init__(True)
+        self.explode_start = start
+        self.explode_update = update
+        self.explode_close = close
+
+    def start(self, *_args):
+        if self.explode_start:
+            raise RuntimeError("start")
+        return True
+
+    def update_icon(self, path):
+        if self.explode_update:
+            raise RuntimeError("update")
+        super().update_icon(path)
+
+    def close(self):
+        self.closed += 1
+        if self.explode_close:
+            raise RuntimeError("close")
+
+
+def test_tray_degrades_to_fallback_when_notifier_update_raises(tmp_path):
+    notifier = ExplodingBackend(update=True, close=True)
+    fallback = FakeBackend(True)
+    tray = TrayManager(lambda _icon: notifier, lambda: fallback)
+    tray.start(tmp_path / "initial.svg")
+
+    assert tray.update_icon(tmp_path / "changed.svg") is True
+
+    assert fallback.updated == []
+    assert notifier.closed == 1
+    assert tray.active_backend is fallback
+
+
+def test_tray_contains_backend_start_update_and_close_failures(tmp_path):
+    notifier = ExplodingBackend(start=True, close=True)
+    fallback = ExplodingBackend(start=True, close=True)
+    tray = TrayManager(lambda _icon: notifier, lambda: fallback)
+
+    assert tray.start(tmp_path / "initial.svg") is False
+    assert tray.update_icon(tmp_path / "changed.svg") is False
+    tray.close()
+    tray.close()
+
+    assert tray.active_backend is None
