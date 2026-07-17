@@ -79,6 +79,8 @@ class ApplicationController:
         self._refresh_pending = False
         self._operation_active = False
         self.install_flow = install_flow
+        self._first_launch_pending = False
+        self._first_launch_completed = False
         self._operation_queue: Deque[Tuple[Callable[[], Any], Callable[[Any], None], Callable[[Exception], None]]] = deque()
 
     def ui_actions(self) -> UIActions:
@@ -109,9 +111,14 @@ class ApplicationController:
             self._start_or_update_tray(initial_icon)
         else:
             self.window.apply_state(WarpState.UNKNOWN)
-        self._reschedule()
-        installation_active = bool(self.install_flow and self.install_flow.start())
-        if not installation_active:
+        if self.install_flow is not None:
+            self.scheduler.stop()
+            self._first_launch_pending = True
+            installation_active = bool(self.install_flow.start())
+            if self._first_launch_pending and not installation_active:
+                self.complete_first_launch()
+        else:
+            self._reschedule()
             self.refresh()
         if not background or not self._tray_available:
             self.show_panel()
@@ -540,10 +547,27 @@ class ApplicationController:
 
     def _reschedule(self) -> None:
         self.scheduler.stop()
-        if self.config.auto_update_enabled and not self._shutdown:
+        if (
+            self.config.auto_update_enabled
+            and not self._shutdown
+            and not self._first_launch_pending
+        ):
             self.scheduler.start(
                 self.refresh, self.config.update_interval_seconds
             )
+
+    def complete_first_launch(self) -> None:
+        if (
+            self._shutdown
+            or not self._first_launch_pending
+            or self._first_launch_completed
+        ):
+            return
+        self._first_launch_pending = False
+        self._first_launch_completed = True
+        self.install_flow = None
+        self._reschedule()
+        self.refresh()
 
     def show_panel(self) -> None:
         self.window.show_compact()
@@ -655,7 +679,7 @@ def _build_runtime(config: Config):
             tasks=tasks,
             idle_add=GLib.idle_add,
             warp=warp,
-            on_complete=controller.refresh,
+            on_complete=controller.complete_first_launch,
         )
 
     def registration_flow():
@@ -664,7 +688,7 @@ def _build_runtime(config: Config):
             warp=warp,
             tasks=tasks,
             idle_add=GLib.idle_add,
-            on_complete=controller.refresh,
+            on_complete=controller.complete_first_launch,
         )
 
     controller.install_flow = select_first_launch_flow(

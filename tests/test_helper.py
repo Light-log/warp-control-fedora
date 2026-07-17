@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from warp_control.commands import CommandResult
 from warp_control.installers.detector import Architecture, Distribution, SystemInfo
 from warp_control.privileged.helper import (
     InvocationRejected,
@@ -14,12 +15,14 @@ from warp_control.privileged.helper import (
     validate_invocation,
 )
 from warp_control.privileged.repositories import (
+    APT_PREFERENCES_CONTENT,
     APT_KEY_URL,
     RPM_REPOSITORY_URL,
     RepositoryRejected,
     repository_config,
     validate_rpm_repository,
     validate_signing_key,
+    validate_apt_candidate,
 )
 from warp_control.privileged.runner import (
     ConcurrentExecution,
@@ -31,6 +34,22 @@ from warp_control.privileged.runner import (
 
 def system(distribution, version, codename=None, arch=Architecture.AMD64):
     return SystemInfo(distribution, version, codename, arch)
+
+
+class CallbackRunner:
+    def __init__(self, callback):
+        self.callback = callback
+
+    def run(self, argv, timeout=300):
+        completed = self.callback(list(argv), timeout=timeout)
+        if isinstance(completed, CommandResult):
+            return completed
+        return CommandResult(
+            completed.returncode == 0,
+            completed.stdout or "",
+            completed.stderr or "",
+            completed.returncode,
+        )
 
 
 @pytest.mark.parametrize("argv", [["install-warp", "extra"], [], ["restart-warp", "--force"]])
@@ -49,11 +68,19 @@ def test_helpers_reject_nonempty_stdin_and_non_root():
 def test_privileged_runner_uses_fixed_environment_absolute_allowlist_and_no_shell():
     calls = []
 
-    def fake_run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, 0, "ok", "")
+    class Process:
+        stdout = io.BytesIO(b"ok")
+        stderr = io.BytesIO(b"")
+        pid = 7
 
-    runner = PrivilegedCommandRunner(run_callable=fake_run)
+        def wait(self, timeout):
+            return 0
+
+    def fake_process(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return Process()
+
+    runner = PrivilegedCommandRunner(process_factory=fake_process)
     result = runner.run(["/usr/bin/systemctl", "enable", "--now", "warp-svc.service"])
 
     assert result.ok
@@ -70,6 +97,64 @@ def test_privileged_runner_uses_fixed_environment_absolute_allowlist_and_no_shel
         runner.run(["systemctl", "restart", "warp-svc.service"])
     with pytest.raises(ValueError):
         runner.run(["/bin/sh", "-c", "id"])
+
+
+class FakePopenProcess:
+    def __init__(self, stdout=b"", stderr=b"", *, hangs=False):
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = io.BytesIO(stderr)
+        self.pid = 4242
+        self.hangs = hangs
+        self.killed = False
+
+    def wait(self, timeout):
+        if self.hangs and not self.killed:
+            raise subprocess.TimeoutExpired("fake", timeout)
+        return -9 if self.killed else 0
+
+    def kill(self):
+        self.killed = True
+
+
+def test_privileged_popen_runner_bounds_output_and_starts_new_session():
+    calls = []
+    process = FakePopenProcess(stdout=b"x" * 128)
+
+    def factory(argv, **options):
+        calls.append((argv, options))
+        return process
+
+    killed = []
+    runner = PrivilegedCommandRunner(
+        process_factory=factory,
+        output_limit=64,
+        killpg=lambda pid, sig: (killed.append((pid, sig)), setattr(process, "killed", True)),
+    )
+    result = runner.run(["/usr/bin/systemctl", "restart", "warp-svc.service"])
+    assert result.returncode == 125
+    assert len(result.stdout.encode()) + len(result.stderr.encode()) <= 64
+    assert killed and process.killed
+    assert calls[0][1]["start_new_session"] is True
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["stdin"] is subprocess.DEVNULL
+
+
+def test_privileged_popen_runner_kills_and_waits_process_group_on_deadline():
+    process = FakePopenProcess(hangs=True)
+    killed = []
+
+    def kill_group(pid, sig):
+        killed.append((pid, sig))
+        process.killed = True
+
+    runner = PrivilegedCommandRunner(
+        process_factory=lambda argv, **options: process,
+        killpg=kill_group,
+    )
+    result = runner.run(["/usr/bin/systemctl", "restart", "warp-svc.service"], timeout=1)
+    assert result.returncode == 124
+    assert killed == [(4242, 9)]
+    assert process.killed is True
 
 
 def test_exclusive_lock_rejects_concurrent_execution(tmp_path):
@@ -120,7 +205,7 @@ def test_downloaded_rpm_repository_rejects_any_foreign_url():
 def test_repository_internal_boundaries_reject_tampered_inputs_before_commands(tmp_path):
     calls = []
     helper = InstallWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args)),
+        runner=CallbackRunner(lambda *args, **kwargs: calls.append(args)),
         detect=lambda: system(Distribution.FEDORA, "44"),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
@@ -129,7 +214,9 @@ def test_repository_internal_boundaries_reject_tampered_inputs_before_commands(t
         apt_source=tmp_path / "source",
     )
     with pytest.raises(RepositoryRejected):
-        helper._install_rpm_repository("https://pkg.cloudflareclient.com/evil")
+        helper._install_rpm_repository(
+            "https://pkg.cloudflareclient.com/evil", APT_KEY_URL
+        )
     with pytest.raises(RepositoryRejected):
         helper._install_apt_repository("https://example.com/key", "deb evil\n")
     assert calls == []
@@ -168,7 +255,7 @@ def test_json_progress_has_strict_small_schema():
 
 def test_install_helper_never_runs_for_unsupported_system(tmp_path):
     calls = []
-    runner = PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args))
+    runner = CallbackRunner(lambda *args, **kwargs: calls.append(args))
     helper = InstallWarpHelper(
         runner=runner,
         detect=lambda: system(Distribution.ARCH, None),
@@ -192,7 +279,7 @@ def test_install_helper_never_runs_for_unsupported_system(tmp_path):
 def test_helper_rejects_unsupported_versions_and_architectures_before_commands(tmp_path, unsupported):
     calls = []
     helper = InstallWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args)),
+        runner=CallbackRunner(lambda *args, **kwargs: calls.append(args)),
         detect=lambda: unsupported,
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
@@ -229,6 +316,12 @@ def _installing_runner(calls):
                 "fpr:::::::::C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA:\n"
                 "uid:-::::0::hash::Cloudflare Package Repository <support@cloudflare.com>::::::::::0:\n"
             )
+        if argv[:2] == ["/usr/bin/apt-cache", "policy"]:
+            stdout = (
+                "cloudflare-warp:\n  Installed: (none)\n  Candidate: 2026.1.1\n"
+                "  Version table:\n     2026.1.1 1001\n"
+                "        1001 https://pkg.cloudflareclient.com/ bookworm/main amd64 Packages\n"
+            )
         return subprocess.CompletedProcess(argv, 0, stdout, "")
 
     return fake_run
@@ -238,17 +331,23 @@ def test_fedora_helper_uses_only_official_repo_targeted_metadata_and_service(tmp
     calls = []
     repository = tmp_path / "etc/yum.repos.d/cloudflare-warp.repo"
     helper = InstallWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=_installing_runner(calls)),
+        runner=CallbackRunner(_installing_runner(calls)),
         detect=lambda: system(Distribution.FEDORA, "44"),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
         rpm_repository=repository,
+        rpm_keyring=tmp_path / "keyrings/cloudflare.gpg",
     )
     helper.run()
     assert repository.is_file()
+    assert "gpgkey=file:///usr/share/keyrings/cloudflare-warp-archive-keyring.gpg" in repository.read_text()
+    assert (tmp_path / "keyrings/cloudflare.gpg").read_bytes() == b"binary-keyring"
     assert calls[-3:] == [
         ("/usr/bin/dnf", "-q", "makecache", "--repo", "cloudflare-warp-stable"),
-        ("/usr/bin/dnf", "-y", "install", "cloudflare-warp"),
+        (
+            "/usr/bin/dnf", "-y", "repository-packages",
+            "cloudflare-warp-stable", "install", "cloudflare-warp",
+        ),
         ("/usr/bin/systemctl", "enable", "--now", "warp-svc.service"),
     ]
 
@@ -256,11 +355,12 @@ def test_fedora_helper_uses_only_official_repo_targeted_metadata_and_service(tmp
 def test_rhel_helper_performs_confirmed_epel_action_before_official_repo(tmp_path):
     calls = []
     helper = InstallWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=_installing_runner(calls)),
+        runner=CallbackRunner(_installing_runner(calls)),
         detect=lambda: system(Distribution.RHEL, "9"),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
         rpm_repository=tmp_path / "repo",
+        rpm_keyring=tmp_path / "key",
     )
     helper.run()
     assert calls[0] == ("/usr/bin/dnf", "-y", "install", "epel-release")
@@ -270,20 +370,43 @@ def test_debian_helper_verifies_and_dearmors_key_and_writes_signed_by_source(tmp
     calls = []
     keyring = tmp_path / "keyrings/key.gpg"
     source = tmp_path / "sources/cloudflare.list"
+    preferences = tmp_path / "preferences/cloudflare"
     helper = InstallWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=_installing_runner(calls)),
+        runner=CallbackRunner(_installing_runner(calls)),
         detect=lambda: system(Distribution.DEBIAN, "12", "bookworm"),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
         apt_keyring=keyring,
         apt_source=source,
+        apt_preferences=preferences,
     )
     helper.run()
     assert keyring.read_bytes() == b"binary-keyring"
     assert "signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg" in source.read_text()
+    assert preferences.read_bytes() == APT_PREFERENCES_CONTENT
     assert any("--show-keys" in command and "--no-auto-key-retrieve" in command for command in calls)
     assert ("/usr/bin/apt-get", "update") in calls
+    assert ("/usr/bin/apt-cache", "policy", "cloudflare-warp") in calls
     assert ("/usr/bin/apt-get", "install", "-y", "cloudflare-warp") in calls
+
+
+def test_apt_candidate_parser_rejects_foreign_same_name_package():
+    validate_apt_candidate(
+        "cloudflare-warp:\n Candidate: 1\n  1 1001\n"
+        "  1001 https://pkg.cloudflareclient.com/ noble/main amd64 Packages\n"
+    )
+    with pytest.raises(RepositoryRejected, match="approved origin"):
+        validate_apt_candidate(
+            "cloudflare-warp:\n Candidate: 99\n"
+            "  99 1001\n  1001 https://mirror.example/ noble/main amd64 Packages\n"
+        )
+
+    with pytest.raises(RepositoryRejected, match="approved origin"):
+        validate_apt_candidate(
+            "cloudflare-warp:\n Candidate: 99\n"
+            "  99 1001\n  1001 https://mirror.example/ noble/main amd64 Packages\n"
+            "  1 1001\n  1001 https://pkg.cloudflareclient.com/ noble/main amd64 Packages\n"
+        )
 
 
 def test_restart_helper_is_purpose_only(tmp_path):
@@ -294,7 +417,7 @@ def test_restart_helper_is_purpose_only(tmp_path):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     helper = RestartWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=fake_run),
+        runner=CallbackRunner(fake_run),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
         detect=lambda: system(Distribution.FEDORA, "44"),
@@ -310,7 +433,7 @@ def test_restart_helper_is_purpose_only(tmp_path):
 def test_restart_helper_rejects_unsupported_system_before_systemctl(tmp_path, unsupported):
     calls = []
     helper = RestartWarpHelper(
-        runner=PrivilegedCommandRunner(run_callable=lambda *args, **kwargs: calls.append(args)),
+        runner=CallbackRunner(lambda *args, **kwargs: calls.append(args)),
         progress=JsonProgress(io.StringIO()),
         lock_path=tmp_path / "lock",
         detect=lambda: unsupported,

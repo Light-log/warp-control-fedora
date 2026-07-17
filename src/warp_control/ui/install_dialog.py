@@ -1,7 +1,12 @@
 """Headless-testable installation flow plus its optional GTK dialog."""
 
 import json
+import os
+import queue
+import signal
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Iterator, Optional
@@ -287,8 +292,20 @@ class RetryCoordinator:
 class InstallerProcess:
     """Spawn only the fixed helper and validate every JSONL progress event."""
 
-    def __init__(self, popen: Callable = subprocess.Popen) -> None:
+    def __init__(
+        self,
+        popen: Callable = subprocess.Popen,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        overall_timeout: float = 1200,
+        idle_timeout: float = 120,
+        killpg: Callable[[int, int], None] = os.killpg,
+    ) -> None:
         self._popen = popen
+        self._clock = clock
+        self._overall_timeout = overall_timeout
+        self._idle_timeout = idle_timeout
+        self._killpg = killpg
 
     def events(self) -> Iterator[ProgressEvent]:
         process = self._popen(
@@ -297,26 +314,111 @@ class InstallerProcess:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            text=True,
+            text=False,
+            start_new_session=True,
             env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PATH": "/usr/bin:/bin"},
         )
         if process.stdout is None:
+            self._terminate(process)
             raise ProgressProtocolError("helper progress pipe is unavailable")
+        lines = queue.Queue(maxsize=16)
+        stopped = threading.Event()
+
+        def read_lines() -> None:
+            try:
+                while not stopped.is_set():
+                    line = process.stdout.readline(MAX_PROGRESS_LINE + 1)
+                    if not line:
+                        break
+                    while not stopped.is_set():
+                        try:
+                            lines.put(line, timeout=0.1)
+                            break
+                        except queue.Full:
+                            continue
+            finally:
+                while not stopped.is_set():
+                    try:
+                        lines.put(None, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+
+        reader = threading.Thread(
+            target=read_lines,
+            name="warp-control-installer-progress",
+            daemon=True,
+        )
+        reader.start()
+        started = self._clock()
+        last_activity = started
+        terminal_seen = False
         try:
             while True:
-                line = process.stdout.readline(MAX_PROGRESS_LINE + 1)
-                if not line:
+                now = self._clock()
+                remaining = min(
+                    started + self._overall_timeout - now,
+                    last_activity + self._idle_timeout - now,
+                )
+                if remaining <= 0:
+                    raise ProgressProtocolError("helper progress timed out")
+                try:
+                    raw_line = lines.get(timeout=min(remaining, 0.1))
+                except queue.Empty:
+                    continue
+                if raw_line is None:
                     break
-                if len(line.encode("utf-8")) > MAX_PROGRESS_LINE or not line.endswith("\n"):
+                last_activity = self._clock()
+                if isinstance(raw_line, str):
+                    raw_line = raw_line.encode("utf-8")
+                if len(raw_line) > MAX_PROGRESS_LINE or not raw_line.endswith(b"\n"):
                     raise ProgressProtocolError("helper emitted an oversized progress line")
-                yield parse_progress_line(line[:-1])
+                try:
+                    line = raw_line[:-1].decode("utf-8", errors="strict")
+                except UnicodeError as error:
+                    raise ProgressProtocolError("helper progress is not UTF-8") from error
+                event = parse_progress_line(line)
+                if terminal_seen:
+                    raise ProgressProtocolError("helper emitted progress after completion")
+                if event.stage == "complete" and event.status == "done":
+                    terminal_seen = True
+                yield event
             returncode = process.wait(timeout=5)
             if returncode != 0:
                 raise ProgressProtocolError(f"helper failed with exit status {returncode}")
+            if not terminal_seen:
+                raise ProgressProtocolError("helper ended without a terminal completion event")
         except BaseException:
-            if process.poll() is None:
-                process.kill()
+            self._terminate(process)
             raise
+        finally:
+            stopped.set()
+            try:
+                process.stdout.close()
+            except (AttributeError, OSError):
+                pass
+            reader.join(timeout=0.2)
+
+    def _terminate(self, process) -> None:
+        try:
+            if process.poll() is None:
+                try:
+                    self._killpg(process.pid, signal.SIGKILL)
+                except (AttributeError, OSError):
+                    process.kill()
+        except (AttributeError, OSError):
+            try:
+                process.kill()
+            except (AttributeError, OSError):
+                pass
+        try:
+            process.wait(timeout=5)
+        except (AttributeError, OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except (AttributeError, OSError, subprocess.TimeoutExpired):
+                pass
 
 
 # GTK is imported after all presenter contracts so headless tests stay independent.

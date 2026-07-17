@@ -229,7 +229,7 @@ def make_controller(tmp_path):
 
 
 def test_active_first_launch_installer_defers_warp_refresh(tmp_path):
-    controller, _config, tasks, _scheduler, _window, _warp, _tray = make_controller(tmp_path)
+    controller, _config, tasks, scheduler, _window, _warp, _tray = make_controller(tmp_path)
 
     class InstallFlow:
         def __init__(self):
@@ -245,6 +245,48 @@ def test_active_first_launch_installer_defers_warp_refresh(tmp_path):
 
     assert flow.calls == 1
     assert tasks.pending == []
+    assert scheduler.started == []
+
+    controller.complete_first_launch()
+    controller.complete_first_launch()
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
+
+
+def test_cancelled_first_launch_resumes_scheduler_and_refresh_once(tmp_path):
+    controller, _config, tasks, scheduler, _window, _warp, _tray = make_controller(tmp_path)
+
+    class CancelledFlow:
+        def start(self):
+            return False
+
+    controller.install_flow = CancelledFlow()
+    controller.start(background=True)
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
+    controller.complete_first_launch()
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
+
+
+def test_synchronous_first_launch_completion_resumes_exactly_once(tmp_path):
+    controller, _config, tasks, scheduler, _window, _warp, _tray = make_controller(tmp_path)
+
+    class CompletedFlow:
+        def start(self):
+            controller.complete_first_launch()
+            return True
+
+    controller.install_flow = CompletedFlow()
+    controller.start(background=True)
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
+    controller.complete_first_launch()
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
+    controller.complete_first_launch()
+    assert len(scheduler.started) == 1
+    assert len(tasks.pending) == 1
 
 
 def test_preinstalled_warp_selects_registration_check_without_installation():

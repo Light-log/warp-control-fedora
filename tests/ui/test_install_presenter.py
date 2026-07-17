@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 
@@ -97,6 +98,86 @@ def test_installer_process_spawns_exact_pkexec_without_stdin_or_shell():
     assert argv == ["/usr/bin/pkexec", "/usr/libexec/warp-control/install-warp"]
     assert options["shell"] is False
     assert options["stdin"] is not None
+    assert options["start_new_session"] is True
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        [""],
+        [json.dumps({"stage": "packages", "status": "done", "message": "Paquete"}) + "\n", ""],
+        [
+            json.dumps({"stage": "complete", "status": "done", "message": "Listo"}) + "\n",
+            json.dumps({"stage": "service", "status": "done", "message": "Tarde"}) + "\n",
+            "",
+        ],
+    ],
+)
+def test_installer_protocol_rejects_empty_truncated_or_post_terminal_output(lines):
+    class Output:
+        def readline(self, _limit):
+            return lines.pop(0)
+
+        def close(self):
+            return None
+
+    class Process:
+        stdout = Output()
+        killed = False
+        waits = 0
+
+        def wait(self, timeout):
+            self.waits += 1
+            return 0
+
+        def poll(self):
+            return None if not self.killed else -9
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    with pytest.raises(ProgressProtocolError):
+        list(InstallerProcess(lambda *args, **kwargs: process).events())
+    assert process.killed is True
+    assert process.waits >= 1
+
+
+@pytest.mark.parametrize(
+    "timeouts",
+    [
+        {"overall_timeout": 0, "idle_timeout": 100},
+        {"overall_timeout": 100, "idle_timeout": 0},
+    ],
+)
+def test_installer_progress_timeouts_kill_and_wait(timeouts):
+    class BlockingOutput:
+        def readline(self, _limit):
+            threading.Event().wait(0.5)
+            return b""
+
+        def close(self):
+            return None
+
+    class Process:
+        stdout = BlockingOutput()
+        killed = False
+        waits = 0
+
+        def poll(self):
+            return None if not self.killed else -9
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            self.waits += 1
+            return -9
+
+    process = Process()
+    with pytest.raises(ProgressProtocolError, match="timed out"):
+        list(InstallerProcess(lambda *args, **kwargs: process, **timeouts).events())
+    assert process.killed and process.waits >= 1
 
 
 def test_progress_parser_accepts_only_bounded_jsonl_schema():

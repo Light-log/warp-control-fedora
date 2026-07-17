@@ -17,7 +17,9 @@ APT_KEY_URL = OfficialSource.APT_KEY.value
 APT_REPOSITORY_URL = OfficialSource.APT_REPOSITORY.value
 APT_KEYRING = Path("/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg")
 APT_SOURCE = Path("/etc/apt/sources.list.d/cloudflare-client.list")
+APT_PREFERENCES = Path("/etc/apt/preferences.d/cloudflare-warp")
 RPM_REPOSITORY = Path("/etc/yum.repos.d/cloudflare-warp.repo")
+RPM_KEYRING = Path("/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg")
 MAX_DOWNLOAD_BYTES = 256 * 1024
 EXPECTED_SIGNING_FINGERPRINT = "C068A2B5771775193CBE1F2F6E2DD2174FA1C3BA"
 EXPECTED_SIGNING_UID = "Cloudflare Package Repository <support@cloudflare.com>"
@@ -39,6 +41,22 @@ class RepositoryRejected(RuntimeError):
     pass
 
 
+APT_PREFERENCES_CONTENT = (
+    b"Package: cloudflare-warp\n"
+    b"Pin: origin pkg.cloudflareclient.com\n"
+    b"Pin-Priority: 1001\n"
+)
+RPM_LOCAL_REPOSITORY_CONTENT = (
+    b"[cloudflare-warp-stable]\n"
+    b"name=cloudflare-warp-stable\n"
+    b"baseurl=https://pkg.cloudflareclient.com/rpm/$releasever\n"
+    b"enabled=1\n"
+    b"type=rpm\n"
+    b"gpgcheck=1\n"
+    b"gpgkey=file:///usr/share/keyrings/cloudflare-warp-archive-keyring.gpg\n"
+)
+
+
 @dataclass(frozen=True)
 class RepositoryConfig:
     family: str
@@ -52,7 +70,9 @@ def repository_config(system: SystemInfo) -> RepositoryConfig:
     if not plan.supported:
         raise RepositoryRejected("the detected system is not supported")
     if system.distribution in (Distribution.FEDORA, Distribution.RHEL):
-        return RepositoryConfig("rpm", repository_url=RPM_REPOSITORY_URL)
+        return RepositoryConfig(
+            "rpm", repository_url=RPM_REPOSITORY_URL, key_url=APT_KEY_URL
+        )
     if system.distribution in (Distribution.UBUNTU, Distribution.DEBIAN):
         if not system.codename or not re.fullmatch(r"[a-z][a-z0-9-]{1,31}", system.codename):
             raise RepositoryRejected("invalid APT codename")
@@ -128,6 +148,32 @@ def validate_signing_key(colon_output: str) -> None:
         raise RepositoryRejected("signing key fingerprint is not approved")
     if EXPECTED_SIGNING_UID not in uids:
         raise RepositoryRejected("signing key UID is not approved")
+
+
+def validate_apt_candidate(policy_output: str) -> None:
+    if not isinstance(policy_output, str) or len(policy_output.encode("utf-8")) > MAX_DOWNLOAD_BYTES:
+        raise RepositoryRejected("invalid apt policy output")
+    candidate = None
+    approved_candidate = False
+    current_version = None
+    for raw_line in policy_output.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Candidate:"):
+            if candidate is not None:
+                raise RepositoryRejected("ambiguous apt candidate")
+            candidate = line.partition(":")[2].strip()
+            continue
+        version_match = re.fullmatch(r"(?:\*\*\*\s+)?([^\s]+)\s+\d+", line)
+        if version_match:
+            current_version = version_match.group(1)
+            continue
+        if current_version == candidate and re.fullmatch(
+            r"1001 https://pkg\.cloudflareclient\.com/? [a-z][a-z0-9-]{1,31}/main (?:amd64|arm64) Packages",
+            line,
+        ):
+            approved_candidate = True
+    if not candidate or candidate == "(none)" or not approved_candidate:
+        raise RepositoryRejected("cloudflare-warp candidate is not from the approved origin")
 
 
 def atomic_write(path: Path, contents: bytes, mode: int = 0o644) -> None:
