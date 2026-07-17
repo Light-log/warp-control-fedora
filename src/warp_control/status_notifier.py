@@ -104,9 +104,15 @@ class StatusNotifierItem:
         owner_id, self._owner_id = self._owner_id, None
         self._started = False
         if registration_id is not None:
-            self._bus.unexport(registration_id)
+            try:
+                self._bus.unexport(registration_id)
+            except Exception:
+                pass
         if owner_id is not None:
-            self._bus.unown_name(owner_id)
+            try:
+                self._bus.unown_name(owner_id)
+            except Exception:
+                pass
 
 
 class GioSessionBus:

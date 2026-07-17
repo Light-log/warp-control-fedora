@@ -139,6 +139,24 @@ def test_partial_registration_is_rolled_back(tmp_path):
     assert bus.unowns == [42]
 
 
+def test_cleanup_attempts_name_release_when_unexport_fails(tmp_path):
+    class BrokenCleanupBus(FakeBus):
+        def unexport(self, registration_id):
+            self.unexports.append(registration_id)
+            raise RuntimeError("already gone")
+
+    bus = BrokenCleanupBus()
+    item = StatusNotifierItem(
+        bus, lambda: None, lambda _x, _y: None, tmp_path / "x.svg"
+    )
+    item.start()
+
+    item.close()
+
+    assert bus.unexports == [41]
+    assert bus.unowns == [42]
+
+
 class FakeWidget:
     def __init__(self, label=None):
         self.label = label
