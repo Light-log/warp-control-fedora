@@ -46,6 +46,33 @@ relative=(
     "share/applications/warp-control.desktop"
 )
 
+AUTOSTART_FILE=$HOME/.config/autostart/warp-control.desktop
+if [[ -e $AUTOSTART_FILE || -L $AUTOSTART_FILE ]]; then
+    autostart_parent=${AUTOSTART_FILE%/*}
+    while [[ $autostart_parent == "$HOME"/* ]]; do
+        [[ ! -L $autostart_parent ]] || die "$autostart_parent es un enlace simbólico; migración cancelada."
+        autostart_parent=${autostart_parent%/*}
+    done
+    [[ ! -L $AUTOSTART_FILE ]] || die "$AUTOSTART_FILE es un enlace simbólico; migración cancelada."
+    [[ -f $AUTOSTART_FILE && -r $AUTOSTART_FILE ]] || die "$AUTOSTART_FILE no es un archivo regular legible."
+    autostart_size=$(wc -c < "$AUTOSTART_FILE")
+    [[ $autostart_size =~ ^[0-9]+$ && $autostart_size -le 65536 ]] || die "El autostart supera el límite seguro."
+    exec_value=""
+    exec_count=0
+    while IFS= read -r desktop_line || [[ -n $desktop_line ]]; do
+        desktop_line=${desktop_line%$'\r'}
+        if [[ $desktop_line == Exec=* ]]; then
+            exec_count=$((exec_count + 1))
+            exec_value=${desktop_line#Exec=}
+        fi
+    done < "$AUTOSTART_FILE"
+    legacy_launcher=$LOCAL_ROOT/bin/warp-control
+    if ((exec_count == 1)) && { [[ $exec_value == "$legacy_launcher" ]] || [[ $exec_value == "$legacy_launcher "* ]]; }; then
+        targets+=("$AUTOSTART_FILE")
+        relative+=("config/autostart/warp-control.desktop")
+    fi
+fi
+
 found=()
 found_relative=()
 for index in "${!targets[@]}"; do
@@ -100,7 +127,8 @@ done
 
 # Validar todo antes de crear directorios o mover la primera ruta.
 for target in "${found[@]}"; do
-    [[ $target == "$LOCAL_ROOT"/* && ! -L $target ]] || die "Ruta insegura: $target"
+    [[ $target == "$LOCAL_ROOT"/* || $target == "$AUTOSTART_FILE" ]] || die "Ruta insegura: $target"
+    [[ ! -L $target ]] || die "Ruta insegura: $target"
 done
 
 mkdir -p -- "$BACKUP_ROOT"

@@ -141,6 +141,107 @@ def test_install_rejects_package_symlink(tmp_path: Path):
     assert "enlace simbólico" in result.stderr
 
 
+def test_install_rejects_package_with_symlink_ancestor(tmp_path: Path):
+    release = os_release(tmp_path, "fedora")
+    real_dir = tmp_path / "real-artifacts"
+    real_dir.mkdir()
+    artifact = real_dir / "warp-control.rpm"
+    artifact.write_text("fixture")
+    linked_dir = tmp_path / "artifacts"
+    linked_dir.symlink_to(real_dir, target_is_directory=True)
+    result = run_script(
+        "scripts/install.sh",
+        "--dry-run",
+        "--package",
+        str(linked_dir / artifact.name),
+        env={"WARP_CONTROL_OS_RELEASE": str(release)},
+    )
+    assert result.returncode != 0
+    assert "ancestro" in result.stderr
+
+
+def test_install_rejects_symlinked_runtime_directory(tmp_path: Path):
+    release = os_release(tmp_path, "fedora")
+    artifact = tmp_path / "warp-control.rpm"
+    artifact.write_text("fixture")
+    real_runtime = tmp_path / "real-runtime"
+    real_runtime.mkdir(mode=0o700)
+    linked_runtime = tmp_path / "runtime"
+    linked_runtime.symlink_to(real_runtime, target_is_directory=True)
+    result = run_script(
+        "scripts/install.sh",
+        "--dry-run",
+        "--package",
+        str(artifact),
+        env={
+            "WARP_CONTROL_OS_RELEASE": str(release),
+            "XDG_RUNTIME_DIR": str(linked_runtime),
+        },
+    )
+    assert result.returncode != 0
+    assert "temporal" in result.stderr.lower()
+
+
+def test_install_rejects_user_temp_directory_writable_by_others(tmp_path: Path):
+    release = os_release(tmp_path, "fedora")
+    artifact = tmp_path / "warp-control.rpm"
+    artifact.write_text("fixture")
+    unsafe_temp = tmp_path / "unsafe-temp"
+    unsafe_temp.mkdir(mode=0o777)
+    unsafe_temp.chmod(0o777)
+    result = run_script(
+        "scripts/install.sh",
+        "--dry-run",
+        "--package",
+        str(artifact),
+        env={
+            "WARP_CONTROL_OS_RELEASE": str(release),
+            "XDG_RUNTIME_DIR": "",
+            "TMPDIR": str(unsafe_temp),
+        },
+    )
+    assert result.returncode != 0
+    assert "escritura a terceros" in result.stderr
+
+
+def test_install_uses_private_snapshot_if_original_changes(tmp_path: Path):
+    release = os_release(tmp_path, "fedora")
+    artifact = tmp_path / "warp-control.rpm"
+    artifact.write_text("approved-content")
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    installed_content = tmp_path / "installed-content"
+    staged_path = tmp_path / "staged-path"
+    sudo = fake_bin / "sudo"
+    sudo.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf changed-after-plan > {artifact}\n"
+        "for last; do :; done\n"
+        f"cat -- \"$last\" > {installed_content}\n"
+        f"printf %s \"$last\" > {staged_path}\n"
+    )
+    sudo.chmod(0o755)
+    result = run_script(
+        "scripts/install.sh",
+        "--yes",
+        "--package",
+        str(artifact),
+        env={
+            "WARP_CONTROL_OS_RELEASE": str(release),
+            "XDG_RUNTIME_DIR": str(runtime),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert installed_content.read_text() == "approved-content"
+    snapshot = Path(staged_path.read_text())
+    assert snapshot.parent.parent == runtime
+    assert not snapshot.exists()
+    assert "SHA-256" in result.stdout
+
+
 def test_migration_defaults_to_dry_run_and_preserves_config(tmp_path: Path):
     home = tmp_path / "home"
     legacy = home / ".local/lib/warp-control"
@@ -187,6 +288,90 @@ def test_migration_apply_moves_only_known_local_paths_to_backup(tmp_path: Path):
     assert (backup / "share/applications/warp-control.desktop").read_text() == "old"
     assert unrelated.read_text() == "keep"
     assert config.read_text() == "keep config"
+
+
+def test_migration_moves_only_identified_legacy_autostart(tmp_path: Path):
+    home = tmp_path / "home"
+    legacy_autostart = home / ".config/autostart/warp-control.desktop"
+    legacy_autostart.parent.mkdir(parents=True)
+    legacy_autostart.write_text(
+        "[Desktop Entry]\n"
+        f"Exec={home}/.local/bin/warp-control\n"
+        "X-GNOME-Autostart-enabled=true\n"
+    )
+    config = home / ".config/warp-control/config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("keep config")
+    preview = run_script("scripts/migrate-legacy.sh", env={"HOME": str(home)})
+    assert preview.returncode == 0, preview.stderr
+    assert str(legacy_autostart) in preview.stdout
+    assert legacy_autostart.exists()
+
+    applied = run_script(
+        "scripts/migrate-legacy.sh",
+        "--apply",
+        "--yes",
+        env={"HOME": str(home), "WARP_CONTROL_TIMESTAMP": "autostart"},
+    )
+    assert applied.returncode == 0, applied.stderr
+    backup = home / ".local/state/warp-control/legacy-backups/autostart"
+    moved = backup / "config/autostart/warp-control.desktop"
+    assert "Exec=" + str(home / ".local/bin/warp-control") in moved.read_text()
+    assert not legacy_autostart.exists()
+    assert config.read_text() == "keep config"
+
+
+def test_migration_preserves_current_packaged_autostart(tmp_path: Path):
+    home = tmp_path / "home"
+    autostart = home / ".config/autostart/warp-control.desktop"
+    autostart.parent.mkdir(parents=True)
+    content = "[Desktop Entry]\nExec=/usr/bin/warp-control --background\n"
+    autostart.write_text(content)
+    result = run_script(
+        "scripts/migrate-legacy.sh",
+        "--apply",
+        "--yes",
+        env={"HOME": str(home), "WARP_CONTROL_TIMESTAMP": "current"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert autostart.read_text() == content
+    assert "No se encontraron" in result.stdout
+
+
+def test_migration_rolls_back_legacy_autostart_move(tmp_path: Path):
+    home = tmp_path / "home"
+    legacy_dir = home / ".local/lib/warp-control"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "warp_control.py").write_text("old")
+    autostart = home / ".config/autostart/warp-control.desktop"
+    autostart.parent.mkdir(parents=True)
+    autostart.write_text(f"[Desktop Entry]\nExec={home}/.local/bin/warp-control\n")
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    counter = tmp_path / "mv-count"
+    fake_mv = fake_bin / "mv"
+    fake_mv.write_text(
+        "#!/usr/bin/env bash\n"
+        f"n=$(cat {counter} 2>/dev/null || printf 0)\n"
+        "n=$((n + 1))\n"
+        f"printf %s \"$n\" > {counter}\n"
+        "if [ \"$n\" -eq 2 ]; then exit 9; fi\n"
+        "exec /usr/bin/mv \"$@\"\n"
+    )
+    fake_mv.chmod(0o755)
+    result = run_script(
+        "scripts/migrate-legacy.sh",
+        "--apply",
+        "--yes",
+        env={
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "WARP_CONTROL_TIMESTAMP": "autostart-rollback",
+        },
+    )
+    assert result.returncode != 0
+    assert (legacy_dir / "warp_control.py").read_text() == "old"
+    assert autostart.exists()
 
 
 def test_migration_fails_closed_on_legacy_symlink(tmp_path: Path):
