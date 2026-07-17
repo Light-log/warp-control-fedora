@@ -16,7 +16,8 @@ instalador ejecutable.
 
 - **Icono en la bandeja del sistema** con estado en vivo: conectado / conectando /
   desconectado / error.
-- **Interruptor** para conectar o desconectar la VPN al instante.
+- **Mini panel en la bandeja**: un clic muestra el estado con un punto de color y un
+  **interruptor** para conectar o desconectar al instante, sin abrir ninguna ventana.
 - **Exclusiones**: añade URLs o dominios que **no** pasarán por la VPN, con opción de
   incluir todos los subdominios (split tunneling desde la interfaz).
 - **Apariencia**: personaliza el color del icono para cada estado y el color de acento.
@@ -32,6 +33,17 @@ instalador ejecutable.
 
 ## Instalación
 
+### Opción rápida (una línea)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Light-log/warp-control-fedora/main/instalar-warp-control-fedora.sh -o warp-control.sh && bash warp-control.sh
+```
+
+> Descarga el script y lo ejecuta. Si prefieres revisarlo antes (recomendable con
+> cualquier script de internet), abre `warp-control.sh` entre los dos comandos.
+
+### Opción manual
+
 ```bash
 git clone https://github.com/Light-log/warp-control-fedora.git
 cd warp-control-fedora
@@ -46,6 +58,15 @@ Después, abre **WARP Control** desde el menú de aplicaciones o ejecuta:
 ```bash
 warp-control
 ```
+
+## Uso desde la bandeja
+
+Un clic en el icono de la bandeja despliega un **mini panel** con:
+
+- Un **punto de color** con el estado actual (verde conectado · naranja conectando ·
+  gris desconectado · rojo error).
+- Un **interruptor** para conectar o desconectar al instante, sin abrir la ventana.
+- Accesos a **Abrir panel** (exclusiones y apariencia) y **Actualizar**.
 
 ## Desinstalación
 

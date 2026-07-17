@@ -156,7 +156,9 @@ cat > "$APP_SCRIPT" <<'__WARP_CONTROL_PYTHON__'
 
 from __future__ import annotations
 
+import contextlib
 import json
+import math
 import os
 import re
 import shutil
@@ -864,18 +866,40 @@ class WarpControl:
         self.indicator.set_title(APP_NAME)
 
         menu = Gtk.Menu()
-        self.menu_status = Gtk.MenuItem(label="Estado: comprobando…")
-        self.menu_status.set_sensitive(False)
-        menu.append(self.menu_status)
+
+        # ---- Cabecera tipo "mini panel": punto de estado + interruptor ------ #
+        header_item = Gtk.MenuItem()
+        header_item.set_sensitive(True)
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        header_box.set_border_width(4)
+
+        self.menu_dot = Gtk.DrawingArea()
+        self.menu_dot.set_size_request(10, 10)
+        self.menu_dot.set_valign(Gtk.Align.CENTER)
+        self.menu_dot.connect("draw", self._draw_status_dot)
+        header_box.pack_start(self.menu_dot, False, False, 0)
+
+        self.menu_status_label = Gtk.Label(label="Comprobando…")
+        self.menu_status_label.set_xalign(0.0)
+        header_box.pack_start(self.menu_status_label, True, True, 0)
+
+        # Interruptor real: conectar/desconectar sin abrir el panel
+        self.menu_switch = Gtk.Switch()
+        self.menu_switch.set_valign(Gtk.Align.CENTER)
+        self._menu_switch_handler = self.menu_switch.connect(
+            "notify::active", self._on_menu_switch
+        )
+        header_box.pack_start(self.menu_switch, False, False, 0)
+
+        header_item.add(header_box)
+        # Que un clic en la fila no cierre el menú al pulsar el switch
+        header_item.connect("button-press-event", lambda *_: True)
+        menu.append(header_item)
         menu.append(Gtk.SeparatorMenuItem())
 
         open_item = Gtk.MenuItem(label="Abrir panel")
         open_item.connect("activate", lambda *_: self.show_window())
         menu.append(open_item)
-
-        self.menu_toggle = Gtk.MenuItem(label="Conectar")
-        self.menu_toggle.connect("activate", self._toggle_connection)
-        menu.append(self.menu_toggle)
 
         refresh_item = Gtk.MenuItem(label="Actualizar")
         refresh_item.connect("activate", lambda *_: self.refresh_all())
@@ -916,7 +940,7 @@ class WarpControl:
         self.add_button.set_sensitive(not value)
         self.host_entry.set_sensitive(not value)
         if self.indicator is not None:
-            self.menu_toggle.set_sensitive(not value)
+            self.menu_switch.set_sensitive(not value)
 
     # ---------------------------- estado ---------------------------------- #
     def refresh_all(self) -> None:
@@ -965,9 +989,46 @@ class WarpControl:
             power_context.remove_class("on")
 
         if self.indicator is not None:
-            self.menu_status.set_label(f"Estado: {text}")
-            self.menu_toggle.set_label("Desconectar" if connected else "Conectar")
+            self.menu_status_label.set_text(text)
+            # Reflejar el estado en el interruptor sin disparar su callback
+            with self._menu_switch_muted():
+                self.menu_switch.set_active(connected)
+            self.menu_switch.set_sensitive(state != "error" and not self.busy)
+            self.menu_dot.queue_draw()
             self.indicator.set_icon_full(ICONS[css_state], text)
+
+    # ------------------- interruptor del menú de bandeja ------------------- #
+    @contextlib.contextmanager
+    def _menu_switch_muted(self):
+        """Cambia el switch sin que dispare su propio callback."""
+        self.menu_switch.handler_block(self._menu_switch_handler)
+        try:
+            yield
+        finally:
+            self.menu_switch.handler_unblock(self._menu_switch_handler)
+
+    def _on_menu_switch(self, switch, _param) -> None:
+        """El usuario movió el interruptor desde la bandeja."""
+        if self.busy:
+            return
+        wants_on = switch.get_active()
+        if wants_on == (self.state == "connected"):
+            return  # ya estamos en ese estado; nada que hacer
+        self._toggle_connection()
+
+    def _draw_status_dot(self, _widget, cr) -> bool:
+        """Puntito de color que indica el estado, como el de Windows."""
+        colors = {
+            "connected": (0.09, 0.64, 0.29),
+            "connecting": (0.95, 0.50, 0.13),
+            "disconnected": (0.55, 0.58, 0.62),
+            "error": (0.86, 0.20, 0.27),
+        }
+        r, g, b = colors.get(self.state, colors["disconnected"])
+        cr.set_source_rgb(r, g, b)
+        cr.arc(5, 5, 5, 0, 2 * math.pi)
+        cr.fill()
+        return False
 
     def _toggle_connection(self, *_args) -> None:
         if self.busy:
