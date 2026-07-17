@@ -155,3 +155,29 @@ def test_renderer_refuses_symlink_output_directory_and_target(tmp_path):
     target.symlink_to(tmp_path / "elsewhere.svg")
     with pytest.raises(OSError):
         IconRenderer(TEMPLATE_PATH, real_dir).render(WarpState.CONNECTED, Config())
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        '<svg><path fill="{{PRIMARY}}"/></svg>',
+        (
+            '<svg><path fill="{{PRIMARY}}"/><path fill="{{PRIMARY}}"/>'
+            '<path fill="{{SECONDARY}}"/></svg>'
+        ),
+        (
+            '<svg><path fill="{{PRIMARY}}"/><path fill="{{SECONDARY}}"/>'
+            '<path fill="{{UNRESOLVED}}"/></svg>'
+        ),
+    ],
+    ids=["missing", "duplicate", "unresolved"],
+)
+def test_malformed_template_is_rejected_before_output_write(tmp_path, template):
+    template_path = tmp_path / "template.svg"
+    template_path.write_text(template, encoding="utf-8")
+    output_dir = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="template"):
+        IconRenderer(template_path, output_dir).render(WarpState.CONNECTED, Config())
+
+    assert not output_dir.exists()

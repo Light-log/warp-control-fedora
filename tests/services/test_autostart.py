@@ -62,6 +62,15 @@ def test_default_path_falls_back_to_home_config(tmp_path, monkeypatch):
     )
 
 
+def test_relative_xdg_config_home_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative/config")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    assert AutostartService().path == (
+        tmp_path / "home" / ".config" / "autostart" / "warp-control.desktop"
+    )
+
+
 def test_explicit_path_takes_precedence_over_config_home(tmp_path):
     explicit = tmp_path / "custom.desktop"
 

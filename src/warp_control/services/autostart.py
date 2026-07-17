@@ -10,7 +10,10 @@ DEFAULT_DESKTOP_SOURCE = Path("/usr/share/applications/com.robler.warpcontrol.de
 
 def _default_config_home() -> Path:
     configured = os.environ.get("XDG_CONFIG_HOME")
-    return Path(configured) if configured else Path.home() / ".config"
+    configured_path = Path(configured) if configured else None
+    if configured_path is not None and configured_path.is_absolute():
+        return configured_path
+    return Path.home() / ".config"
 
 
 class AutostartService:

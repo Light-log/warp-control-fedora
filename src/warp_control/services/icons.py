@@ -1,4 +1,5 @@
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
@@ -28,15 +29,26 @@ class IconRenderer:
         colors = _load_colors(config.colors)[normalized_state.value]
         primary = colors["primary"]
         secondary = colors["secondary"]
-        svg = self.template_path.read_text(encoding="utf-8")
-        svg = svg.replace("{{PRIMARY}}", primary)
-        svg = svg.replace("{{SECONDARY}}", secondary)
+        svg = self._render_template(primary, secondary)
 
         self._prepare_output_dir()
         target = self.output_dir / f"warp-control-{normalized_state.value}.svg"
         self._refuse_unsafe_target(target)
         self._atomic_write(target, svg)
         return target
+
+    def _render_template(self, primary: str, secondary: str) -> str:
+        svg = self.template_path.read_text(encoding="utf-8")
+        if svg.count("{{PRIMARY}}") != 1 or svg.count("{{SECONDARY}}") != 1:
+            raise ValueError(
+                "icon template must contain exactly one primary and secondary marker"
+            )
+        rendered = svg.replace("{{PRIMARY}}", primary).replace(
+            "{{SECONDARY}}", secondary
+        )
+        if re.search(r"\{\{[^{}]+\}\}", rendered):
+            raise ValueError("icon template contains an unresolved marker")
+        return rendered
 
     def render_all(self, config: Config) -> List[Path]:
         return [self.render(state, config) for state in _RENDERED_STATES]
