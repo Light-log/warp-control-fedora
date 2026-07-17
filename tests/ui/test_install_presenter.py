@@ -11,6 +11,9 @@ from warp_control.ui.install_dialog import (
     InstallPresenter,
     ProgressProtocolError,
     RegistrationCoordinator,
+    RetryCoordinator,
+    RetryDecision,
+    RetryStage,
     build_pkexec_argv,
     parse_progress_line,
 )
@@ -184,3 +187,38 @@ def test_registration_failure_enters_limited_mode_and_exposes_real_retry():
     assert limited
     assert len(retries) == 1
     assert retries[0][0] == flow.start
+
+
+@pytest.mark.parametrize("stage", list(RetryStage))
+def test_stage_retry_is_deferred_once_without_nested_or_duplicate_work(stage):
+    deferred = []
+    retries = []
+    decisions = []
+    recovery = RetryCoordinator(
+        request_decision=lambda received: decisions.append(received) or RetryDecision.RETRY,
+        defer=deferred.append,
+        on_limited=lambda: pytest.fail("unexpected limited mode"),
+    )
+
+    assert recovery.recover(stage, lambda: retries.append(stage)) is True
+    assert recovery.recover(stage, lambda: retries.append("duplicate")) is False
+    assert decisions == [stage]
+    assert retries == []
+    assert len(deferred) == 1
+
+    deferred.pop()()
+    assert retries == [stage]
+    assert recovery.retry_scheduled is False
+
+
+def test_retry_decline_enters_limited_mode_without_scheduling_work():
+    limited = []
+    deferred = []
+    recovery = RetryCoordinator(
+        request_decision=lambda _stage: RetryDecision.LIMITED,
+        defer=deferred.append,
+        on_limited=lambda: limited.append(True),
+    )
+    assert recovery.recover(RetryStage.INSTALLATION, lambda: pytest.fail("retried")) is False
+    assert limited == [True]
+    assert deferred == []

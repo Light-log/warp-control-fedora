@@ -22,6 +22,17 @@ class InstallDecision(str, Enum):
     NOT_NOW = "not_now"
 
 
+class RetryDecision(str, Enum):
+    RETRY = "retry"
+    LIMITED = "limited"
+
+
+class RetryStage(str, Enum):
+    INSTALLATION = "installation"
+    REGISTRATION_STATUS = "registration_status"
+    REGISTRATION_CREATE = "registration_create"
+
+
 class ProgressProtocolError(ValueError):
     pass
 
@@ -189,6 +200,37 @@ class RegistrationCoordinator:
         self.on_retry(self.start, message)
 
 
+class RetryCoordinator:
+    """Serialize user-directed retries and defer them to avoid recursive callbacks."""
+
+    def __init__(
+        self,
+        *,
+        request_decision: Callable[[RetryStage], RetryDecision],
+        defer: Callable[[Callable[[], None]], None],
+        on_limited: Callable[[], None],
+    ) -> None:
+        self.request_decision = request_decision
+        self.defer = defer
+        self.on_limited = on_limited
+        self.retry_scheduled = False
+
+    def recover(self, stage: RetryStage, retry: Callable[[], None]) -> bool:
+        if self.retry_scheduled:
+            return False
+        if self.request_decision(stage) is not RetryDecision.RETRY:
+            self.on_limited()
+            return False
+        self.retry_scheduled = True
+
+        def run_once() -> None:
+            self.retry_scheduled = False
+            retry()
+
+        self.defer(run_once)
+        return True
+
+
 class InstallerProcess:
     """Spawn only the fixed helper and validate every JSONL progress event."""
 
@@ -336,6 +378,11 @@ if Gtk is not None:
             self.on_complete = on_complete
             self.process = process or InstallerProcess()
             self.progress = None
+            self.recovery = RetryCoordinator(
+                request_decision=self._request_retry_decision,
+                defer=lambda callback: self.idle_add(callback),
+                on_limited=self._continue_limited,
+            )
 
         def _instructions(self, summary: str) -> None:
             dialog = Gtk.MessageDialog(
@@ -364,19 +411,35 @@ if Gtk is not None:
             dialog.destroy()
             if not accepted or not self.presenter.can_launch:
                 return False
-            self.progress = InstallProgressDialog(self.parent)
-            self.tasks.submit(self._install, self._installed, self._failed)
+            self._submit_installation()
             return True
+
+        def _submit_installation(self) -> None:
+            if self.progress is None:
+                self.progress = InstallProgressDialog(self.parent)
+            self.tasks.submit(
+                self._install,
+                self._installation_complete,
+                self._installation_failed,
+            )
 
         def _install(self):
             for event in self.process.events():
                 self.idle_add(self.progress.apply_event, event)
-            return self.warp.registration_status()
+            return None
+
+        def _installation_complete(self, _result) -> None:
+            self._close_progress()
+            self._submit_registration_status()
+
+        def _submit_registration_status(self) -> None:
+            self.tasks.submit(
+                self.warp.registration_status,
+                self._installed,
+                self._registration_status_exception,
+            )
 
         def _installed(self, registration) -> None:
-            if self.progress is not None:
-                self.progress.destroy()
-                self.progress = None
             if not isinstance(registration, RegistrationStatus):
                 self._registration_status_failed()
                 return
@@ -385,7 +448,7 @@ if Gtk is not None:
                 if self.presenter.registration_argv(accepted) is None:
                     self.on_complete()
                     return
-                self.tasks.submit(self.warp.register, self._registration_complete, self._failed)
+                self._submit_registration_create()
                 return
             if registration.state is RegistrationState.REGISTERED:
                 self.on_complete()
@@ -393,51 +456,80 @@ if Gtk is not None:
             self._registration_status_failed()
 
         def _registration_status_failed(self) -> None:
-            self.presenter.limited_mode = True
+            self.recovery.recover(
+                RetryStage.REGISTRATION_STATUS,
+                self._submit_registration_status,
+            )
+
+        def _submit_registration_create(self) -> None:
+            self.tasks.submit(
+                self.warp.register,
+                self._registration_complete,
+                self._registration_create_exception,
+            )
+
+        def _request_retry_decision(self, stage: RetryStage) -> RetryDecision:
+            titles = {
+                RetryStage.INSTALLATION: "La instalación no terminó",
+                RetryStage.REGISTRATION_STATUS: "No se pudo comprobar el registro",
+                RetryStage.REGISTRATION_CREATE: "No se pudo crear el registro",
+            }
             dialog = Gtk.MessageDialog(
                 transient_for=self.parent,
                 modal=True,
                 message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.NONE,
-                text="No se pudo comprobar el registro",
+                text=titles[stage],
             )
-            dialog.add_button("Modo limitado", Gtk.ResponseType.CANCEL)
+            dialog.format_secondary_text(
+                "Puedes reintentar esta etapa o continuar en modo limitado."
+            )
+            dialog.add_button("Continuar en modo limitado", Gtk.ResponseType.CANCEL)
             dialog.add_button("Reintentar", Gtk.ResponseType.OK)
-            retry = dialog.run() == Gtk.ResponseType.OK
+            decision = (
+                RetryDecision.RETRY
+                if dialog.run() == Gtk.ResponseType.OK
+                else RetryDecision.LIMITED
+            )
             dialog.destroy()
-            if retry:
-                self.tasks.submit(self.warp.registration_status, self._installed, self._failed)
-            else:
-                self.on_complete()
+            return decision
 
         def _registration_complete(self, result) -> None:
             if isinstance(result, OperationResult) and result.ok:
                 self.on_complete()
                 return
-            self.presenter.limited_mode = True
-            dialog = Gtk.MessageDialog(
-                transient_for=self.parent,
-                modal=True,
-                message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.NONE,
-                text="No se pudo crear el registro",
+            self.recovery.recover(
+                RetryStage.REGISTRATION_CREATE,
+                self._submit_registration_create,
             )
-            dialog.format_secondary_text("Puedes reintentar la creación del registro o continuar en modo limitado.")
-            dialog.add_button("Modo limitado", Gtk.ResponseType.CANCEL)
-            dialog.add_button("Reintentar", Gtk.ResponseType.OK)
-            retry = dialog.run() == Gtk.ResponseType.OK
-            dialog.destroy()
-            if retry:
-                self.tasks.submit(self.warp.register, self._registration_complete, self._failed)
-            else:
-                self.on_complete()
 
-        def _failed(self, _error: Exception) -> None:
+        def _installation_failed(self, _error: Exception) -> None:
+            self._close_progress()
+            self.recovery.recover(
+                RetryStage.INSTALLATION,
+                self._submit_installation,
+            )
+
+        def _registration_status_exception(self, _error: Exception) -> None:
+            self.recovery.recover(
+                RetryStage.REGISTRATION_STATUS,
+                self._submit_registration_status,
+            )
+
+        def _registration_create_exception(self, _error: Exception) -> None:
+            self.recovery.recover(
+                RetryStage.REGISTRATION_CREATE,
+                self._submit_registration_create,
+            )
+
+        def _close_progress(self) -> None:
             if self.progress is not None:
                 self.progress.destroy()
                 self.progress = None
+
+        def _continue_limited(self) -> None:
+            self._close_progress()
             self.presenter.limited_mode = True
-            self._instructions("La instalación no terminó. Puedes reintentar o continuar en modo limitado.")
             self.on_complete()
 
 
