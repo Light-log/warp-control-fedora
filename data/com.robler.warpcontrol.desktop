@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=WARP Control
+Exec=/usr/bin/warp-control
+Icon=com.robler.warpcontrol
+Type=Application
+Categories=Network;Utility;
+StartupNotify=false
