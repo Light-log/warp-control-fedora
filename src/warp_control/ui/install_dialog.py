@@ -150,54 +150,107 @@ class RegistrationCoordinator:
         request_terms: Callable[[], bool],
         on_complete: Callable[[], None],
         on_limited: Callable[[str], None],
-        on_retry: Callable[[Callable[[], bool], str], None],
+        request_retry_decision: Callable[[RetryStage], RetryDecision],
+        defer: Callable[[Callable[[], None]], None],
     ) -> None:
         self.warp = warp
         self.tasks = tasks
         self.request_terms = request_terms
         self.on_complete = on_complete
         self.on_limited = on_limited
-        self.on_retry = on_retry
         self.limited_mode = False
+        self._active = False
+        self._finished = False
+        self._failure_message = ""
+        self.recovery = RetryCoordinator(
+            request_decision=request_retry_decision,
+            defer=defer,
+            on_limited=self._enter_limited,
+        )
 
     def start(self) -> bool:
+        if self._active or self._finished or self.recovery.retry_scheduled:
+            return False
+        self._active = True
         self.tasks.submit(
             self.warp.registration_status,
             self._status_complete,
-            self._exception,
+            self._status_exception,
         )
         return True
 
     def _status_complete(self, status) -> None:
         if not isinstance(status, RegistrationStatus):
-            self._fail("La respuesta del registro no es válida.")
+            self._recover_status("La respuesta del registro no es válida.")
             return
         if status.state is RegistrationState.REGISTERED:
-            self.on_complete()
+            self._complete_once()
             return
         if status.state is not RegistrationState.UNREGISTERED:
-            self._fail("No se pudo comprobar el registro de WARP.")
+            self._recover_status("No se pudo comprobar el registro de WARP.")
             return
         if not self.request_terms():
-            self.limited_mode = True
-            self.on_limited("No se aceptaron los términos; se continuará en modo limitado.")
-            self.on_complete()
+            self._failure_message = (
+                "No se aceptaron los términos; se continuará en modo limitado."
+            )
+            self._enter_limited()
             return
-        self.tasks.submit(self.warp.register, self._register_complete, self._exception)
+        self._submit_registration()
+
+    def _submit_registration(self) -> None:
+        self.tasks.submit(
+            self.warp.register,
+            self._register_complete,
+            self._registration_exception,
+        )
 
     def _register_complete(self, result) -> None:
         if isinstance(result, OperationResult) and result.ok:
-            self.on_complete()
+            self._complete_once()
             return
-        self._fail("No se pudo crear el registro de WARP.")
+        self._recover_registration("No se pudo crear el registro de WARP.")
 
-    def _exception(self, _error: Exception) -> None:
-        self._fail("La comprobación del registro terminó con un error.")
+    def _status_exception(self, _error: Exception) -> None:
+        self._recover_status("La comprobación del registro terminó con un error.")
 
-    def _fail(self, message: str) -> None:
+    def _registration_exception(self, _error: Exception) -> None:
+        self._recover_registration("La creación del registro terminó con un error.")
+
+    def _recover_status(self, message: str) -> None:
+        self._recover(RetryStage.REGISTRATION_STATUS, self.start, message)
+
+    def _recover_registration(self, message: str) -> None:
+        self._recover(
+            RetryStage.REGISTRATION_CREATE,
+            self._retry_registration,
+            message,
+        )
+
+    def _recover(self, stage: RetryStage, retry: Callable[[], None], message: str) -> None:
+        self._active = False
+        self._failure_message = message
+        if self.recovery.recover(stage, retry):
+            self.limited_mode = False
+
+    def _retry_registration(self) -> None:
+        if self._active or self._finished:
+            return
+        self._active = True
+        self._submit_registration()
+
+    def _enter_limited(self) -> None:
+        if self._finished:
+            return
         self.limited_mode = True
-        self.on_limited(message)
-        self.on_retry(self.start, message)
+        self.on_limited(self._failure_message)
+        self._complete_once()
+
+    def _complete_once(self) -> None:
+        if self._finished:
+            return
+        self._active = False
+        self._finished = True
+        self.on_complete()
 
 
 class RetryCoordinator:
@@ -536,7 +589,15 @@ if Gtk is not None:
     class GtkRegistrationFlow:
         """GTK adapter around the headless registration coordinator."""
 
-        def __init__(self, *, parent, warp, tasks, on_complete: Callable[[], None]) -> None:
+        def __init__(
+            self,
+            *,
+            parent,
+            warp,
+            tasks,
+            idle_add,
+            on_complete: Callable[[], None],
+        ) -> None:
             self.parent = parent
             self.coordinator = RegistrationCoordinator(
                 warp=warp,
@@ -544,7 +605,8 @@ if Gtk is not None:
                 request_terms=lambda: confirm_registration_terms(parent),
                 on_complete=on_complete,
                 on_limited=self._limited,
-                on_retry=self._offer_retry,
+                request_retry_decision=self._request_retry_decision,
+                defer=lambda callback: idle_add(callback),
             )
 
         def start(self) -> bool:
@@ -553,18 +615,27 @@ if Gtk is not None:
         def _limited(self, _message: str) -> None:
             self.parent.apply_state(WarpState.ERROR)
 
-        def _offer_retry(self, retry: Callable[[], bool], message: str) -> None:
+        def _request_retry_decision(self, stage: RetryStage) -> RetryDecision:
+            titles = {
+                RetryStage.REGISTRATION_STATUS: "No se pudo comprobar el registro",
+                RetryStage.REGISTRATION_CREATE: "No se pudo crear el registro",
+            }
             dialog = Gtk.MessageDialog(
                 transient_for=self.parent,
                 modal=True,
                 message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.NONE,
-                text="No se pudo completar el registro",
+                text=titles.get(stage, "No se pudo completar el registro"),
             )
-            dialog.format_secondary_text(message)
+            dialog.format_secondary_text(
+                "Puedes reintentar esta etapa o continuar en modo limitado."
+            )
             dialog.add_button("Continuar en modo limitado", Gtk.ResponseType.CANCEL)
             dialog.add_button("Reintentar", Gtk.ResponseType.OK)
-            should_retry = dialog.run() == Gtk.ResponseType.OK
+            decision = (
+                RetryDecision.RETRY
+                if dialog.run() == Gtk.ResponseType.OK
+                else RetryDecision.LIMITED
+            )
             dialog.destroy()
-            if should_retry:
-                retry()
+            return decision

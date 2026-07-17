@@ -663,6 +663,7 @@ def _build_runtime(config: Config):
             parent=window,
             warp=warp,
             tasks=tasks,
+            idle_add=GLib.idle_add,
             on_complete=controller.refresh,
         )
 

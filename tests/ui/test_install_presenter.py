@@ -154,7 +154,8 @@ def test_registration_coordinator_checks_existing_cli_and_registers_only_after_t
         request_terms=lambda: True,
         on_complete=lambda: completed.append(True),
         on_limited=lambda message: limited.append(message),
-        on_retry=lambda callback, message: retries.append((callback, message)),
+        request_retry_decision=lambda _stage: RetryDecision.RETRY,
+        defer=retries.append,
     )
     assert flow.start() is True
     assert calls == ["status", "register"]
@@ -163,7 +164,7 @@ def test_registration_coordinator_checks_existing_cli_and_registers_only_after_t
     assert retries == []
 
 
-def test_registration_failure_enters_limited_mode_and_exposes_real_retry():
+def test_preinstalled_registration_declined_retry_enters_limited_and_completes_once():
     class Warp:
         def registration_status(self):
             return RegistrationStatus(False, "missing", 1, RegistrationState.UNREGISTERED)
@@ -175,18 +176,134 @@ def test_registration_failure_enters_limited_mode_and_exposes_real_retry():
         def submit(self, worker, success, failure):
             success(worker())
 
-    retries = []
+    deferred = []
     limited = []
+    completed = []
     flow = RegistrationCoordinator(
         warp=Warp(), tasks=Tasks(), request_terms=lambda: True,
-        on_complete=lambda: None,
+        on_complete=lambda: completed.append(True),
         on_limited=lambda message: limited.append(message),
-        on_retry=lambda callback, message: retries.append((callback, message)),
+        request_retry_decision=lambda _stage: RetryDecision.LIMITED,
+        defer=deferred.append,
     )
     flow.start()
     assert limited
-    assert len(retries) == 1
-    assert retries[0][0] == flow.start
+    assert flow.limited_mode is True
+    assert completed == [True]
+    assert deferred == []
+    assert flow.start() is False
+    assert completed == [True]
+
+
+def test_preinstalled_registration_retry_is_deferred_deduped_and_completes_once():
+    calls = []
+
+    class Warp:
+        def registration_status(self):
+            calls.append("status")
+            return RegistrationStatus(False, "missing", 1, RegistrationState.UNREGISTERED)
+
+        def register(self):
+            calls.append("register")
+            ok = calls.count("register") >= 2
+            return OperationResult(ok, "", 0 if ok else 7)
+
+    class Tasks:
+        def submit(self, worker, success, failure):
+            try:
+                success(worker())
+            except Exception as error:
+                failure(error)
+
+    deferred = []
+    completed = []
+    flow = RegistrationCoordinator(
+        warp=Warp(), tasks=Tasks(), request_terms=lambda: True,
+        on_complete=lambda: completed.append(True),
+        on_limited=lambda _message: pytest.fail("unexpected limited mode"),
+        request_retry_decision=lambda _stage: RetryDecision.RETRY,
+        defer=deferred.append,
+    )
+    assert flow.start() is True
+    assert flow.limited_mode is False
+    assert completed == []
+    assert len(deferred) == 1
+    assert flow.start() is False
+    assert len(deferred) == 1
+
+    deferred.pop()()
+    assert calls == ["status", "register", "register"]
+    assert completed == [True]
+    assert flow.start() is False
+    assert completed == [True]
+
+
+def test_preinstalled_status_exception_retries_status_stage_without_recursion():
+    status_calls = []
+
+    class Warp:
+        def registration_status(self):
+            status_calls.append(True)
+            if len(status_calls) == 1:
+                raise OSError("temporary")
+            return RegistrationStatus(True, "", 0, RegistrationState.REGISTERED)
+
+    class Tasks:
+        def submit(self, worker, success, failure):
+            try:
+                success(worker())
+            except Exception as error:
+                failure(error)
+
+    deferred, stages, completed = [], [], []
+    flow = RegistrationCoordinator(
+        warp=Warp(), tasks=Tasks(), request_terms=lambda: True,
+        on_complete=lambda: completed.append(True),
+        on_limited=lambda _message: pytest.fail("unexpected limited mode"),
+        request_retry_decision=lambda stage: stages.append(stage) or RetryDecision.RETRY,
+        defer=deferred.append,
+    )
+    flow.start()
+    assert stages == [RetryStage.REGISTRATION_STATUS]
+    assert len(deferred) == 1 and completed == []
+    deferred.pop()()
+    assert len(status_calls) == 2 and completed == [True]
+
+
+def test_preinstalled_register_exception_retries_only_create_stage():
+    register_calls = []
+
+    class Warp:
+        def registration_status(self):
+            return RegistrationStatus(False, "missing", 1, RegistrationState.UNREGISTERED)
+
+        def register(self):
+            register_calls.append(True)
+            if len(register_calls) == 1:
+                raise OSError("temporary")
+            return OperationResult(True, "", 0)
+
+    class Tasks:
+        def submit(self, worker, success, failure):
+            try:
+                success(worker())
+            except Exception as error:
+                failure(error)
+
+    deferred, stages, completed = [], [], []
+    flow = RegistrationCoordinator(
+        warp=Warp(), tasks=Tasks(), request_terms=lambda: True,
+        on_complete=lambda: completed.append(True),
+        on_limited=lambda _message: pytest.fail("unexpected limited mode"),
+        request_retry_decision=lambda stage: stages.append(stage) or RetryDecision.RETRY,
+        defer=deferred.append,
+    )
+    flow.start()
+    assert stages == [RetryStage.REGISTRATION_CREATE]
+    deferred.pop()()
+    assert len(register_calls) == 2 and completed == [True]
+    assert flow.start() is False
+    assert completed == [True]
 
 
 @pytest.mark.parametrize("stage", list(RetryStage))
