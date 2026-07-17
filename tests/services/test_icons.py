@@ -10,6 +10,26 @@ from warp_control.services.icons import IconRenderer
 
 
 TEMPLATE_PATH = Path(__file__).parents[2] / "data" / "icons" / "cloudflare-template.svg"
+LEGACY_PATH_GEOMETRY = (
+    (
+        "M16.493 17.4c.135-.52.08-.983-.161-1.338-.215-.328-.592-.519-1.05-.519"
+        "l-8.663-.109a.148.148 0 01-.135-.082c-.027-.054-.027-.109-.027-.163"
+        ".027-.082.108-.164.189-.164l8.744-.11c1.05-.054 2.153-.9 2.556-1.937"
+        "l.511-1.31c.027-.055.027-.11.027-.164C17.92 8.91 15.66 7 12.942 7"
+        "c-2.503 0-4.628 1.638-5.381 3.903a2.432 2.432 0 00-1.803-.491"
+        "c-1.21.109-2.153 1.092-2.287 2.32-.027.328 0 .628.054.9"
+        "C1.56 13.688 0 15.326 0 17.319c0 .19.027.355.027.545 0 .082.08.137"
+        ".161.137h15.983c.08 0 .188-.055.215-.164l.107-.437"
+    ),
+    (
+        "M19.238 11.75h-.242c-.054 0-.108.054-.135.109l-.35 1.2"
+        "c-.134.52-.08.983.162 1.338.215.328.592.518 1.05.518l1.855.11"
+        "c.054 0 .108.027.135.082.027.054.027.109.027.163-.027.082-.108.164"
+        "-.188.164l-1.91.11c-1.05.054-2.153.9-2.557 1.937l-.134.355"
+        "c-.027.055.026.137.107.137h6.592c.081 0 .162-.055.162-.137"
+        ".107-.41.188-.846.188-1.31-.027-2.62-2.153-4.777-4.762-4.777"
+    ),
+)
 
 
 @pytest.mark.parametrize(
@@ -50,9 +70,7 @@ def test_render_is_deterministic_and_template_contains_installer_geometry(tmp_pa
     assert first == second
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     paths = re.findall(r'<path d="([^"]+)"', template)
-    assert len(paths) == 2
-    assert paths[0].startswith("M16.493 17.4c.135-.52")
-    assert paths[1].startswith("M19.238 11.75h-.242")
+    assert tuple(paths) == LEGACY_PATH_GEOMETRY
 
 
 def test_unknown_state_uses_disconnected_name_and_colors(tmp_path):
