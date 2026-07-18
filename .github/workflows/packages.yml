@@ -1,0 +1,70 @@
+name: Native packages
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rpm:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install RPM build requirements
+        run: |
+          dnf -y install git rpm-build python3-devel pyproject-rpm-macros python3-pytest \
+            python3-gobject gtk3 python3-idna desktop-file-utils appstream
+      - name: Build source archive and RPM
+        run: |
+          scripts/build-source-tarball.sh
+          rpmbuild -ba packaging/rpm/warp-control.spec \
+            --define "_sourcedir $GITHUB_WORKSPACE/dist" \
+            --define "_topdir $GITHUB_WORKSPACE/packaging/rpm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: packaging/rpm/RPMS/noarch/*.rpm
+
+  deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Debian build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper dh-python \
+            pybuild-plugin-pyproject python3-all python3-setuptools python3-wheel \
+            python3-pytest python3-idna python3-gi gir1.2-gtk-3.0 \
+            desktop-file-utils appstream lintian
+      - name: Build and lint DEB
+        run: |
+          dpkg-buildpackage -us -uc -b
+          lintian --fail-on error ../warp-control_*.changes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: ../warp-control_*_all.deb
+
+  arch:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Arch build requirements
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git python python-build \
+            python-installer python-setuptools python-wheel python-pytest \
+            python-gobject gtk3 libayatana-appindicator python-idna namcap
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+      - name: Build and inspect PKGBUILD
+        run: |
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --syncdeps --noconfirm"
+          namcap packaging/arch/*.pkg.tar.*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: packaging/arch/*.pkg.tar.*

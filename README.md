@@ -1,95 +1,68 @@
-# WARP Control — Fedora
+# WARP Control
 
-Interfaz gráfica ligera para **Cloudflare WARP** en Fedora: icono en la bandeja del
-sistema con estado en vivo, conexión con un clic y exclusión de dominios.
+Panel de escritorio GTK para Cloudflare WARP. Es un proyecto de portafolio con
+una base Python revisable, integración nativa de bandeja y paquetes para las
+familias RPM y Debian; Arch se entrega como PKGBUILD experimental.
 
-Todo (app de Python + GTK, icono SVG y dependencias) viaja dentro de un único script
-instalador ejecutable.
+WARP Control no incluye Cloudflare WARP, no modifica repositorios durante la
+instalación del paquete y nunca instala software de terceros sin una
+confirmación explícita. Al abrirse, detecta si `warp-cli` falta y explica el
+flujo oficial antes de pedir autorización mediante PolicyKit.
 
-> **Nota:** este proyecto se construyó cuando Cloudflare no ofrecía una interfaz gráfica
-> oficial en Linux (solo `warp-cli` por terminal). Cloudflare ha lanzado desde entonces el
-> **Cloudflare One Client**, que ya cubre este caso de uso. Mantengo el repositorio como
-> proyecto de portafolio: integración con `warp-cli`, GUI nativa en GTK, gestión de estado
-> en vivo y empaquetado para Fedora.
+## Qué ofrece
 
-## Características
+- Estado, conexión y desconexión de WARP desde una ventana GTK y la bandeja.
+- Exclusiones de split tunnel con normalización IDNA y soporte de subdominios.
+- Colores por estado y acento configurables; el icono de la barra respeta esos
+  colores.
+- Tres pestañas de configuración del mismo ancho: Exclusiones, Apariencia y
+  Ajustes (inicio de sesión, actualización, modo, protocolo y herramientas).
+- Instalador local de paquetes con detección de familia y sin descargas ocultas.
 
-- **Icono en la bandeja del sistema** con estado en vivo: conectado / conectando /
-  desconectado / error.
-- **Mini panel en la bandeja**: un clic muestra el estado con un punto de color y un
-  **interruptor** para conectar o desconectar al instante, sin abrir ninguna ventana.
-- **Exclusiones**: añade URLs o dominios que **no** pasarán por la VPN, con opción de
-  incluir todos los subdominios (split tunneling desde la interfaz).
-- **Apariencia**: personaliza el color del icono para cada estado y el color de acento.
-  Los cambios se guardan en `~/.config/warp-control/config.json` y se aplican al instante.
-- **Instalador todo-en-uno**: resuelve dependencias gráficas, instala Cloudflare WARP y
-  configura el servicio `warp-svc`.
+## Vista previa
 
-## Requisitos
+| Tema oscuro | Tema claro |
+| --- | --- |
+| ![Exclusiones, oscuro](docs/screenshots/dark-exclusions.png) | ![Exclusiones, claro](docs/screenshots/light-exclusions.png) |
+| ![Apariencia, oscuro](docs/screenshots/dark-appearance.png) | ![Apariencia, claro](docs/screenshots/light-appearance.png) |
+| ![Ajustes, oscuro](docs/screenshots/dark-settings.png) | ![Ajustes, claro](docs/screenshots/light-settings.png) |
 
-- Fedora (probado en Fedora Workstation)
-- Entorno de escritorio con soporte de bandeja del sistema (GNOME requiere la extensión
-  AppIndicator; el instalador la incluye)
+Las imágenes se capturaron contra la interfaz GTK real en el backend Broadway;
+no son maquetas.
 
 ## Instalación
 
-### Opción rápida (una línea)
+Consulta [INSTALL.md](docs/INSTALL.md) para construir e instalar el artefacto
+correcto para Fedora/RHEL, Debian/Ubuntu o Arch. Consulta
+[SUPPORT.md](docs/SUPPORT.md) para la matriz de soporte de WARP y sus límites.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Light-log/warp-control-fedora/main/instalar-warp-control-fedora.sh -o warp-control.sh && bash warp-control.sh
-```
-
-> Descarga el script y lo ejecuta. Si prefieres revisarlo antes (recomendable con
-> cualquier script de internet), abre `warp-control.sh` entre los dos comandos.
-
-### Opción manual
-
-```bash
-git clone https://github.com/Light-log/warp-control-fedora.git
-cd warp-control-fedora
-chmod +x instalar-warp-control-fedora.sh
-./instalar-warp-control-fedora.sh
-```
-
-Ejecútalo como usuario normal — pedirá `sudo` solo cuando sea necesario.
-
-Después, abre **WARP Control** desde el menú de aplicaciones o ejecuta:
+Después de instalar un paquete, abre **WARP Control** desde el menú de
+aplicaciones o ejecuta:
 
 ```bash
 warp-control
 ```
 
-## Uso desde la bandeja
+## Arquitectura y seguridad
 
-Un clic en el icono de la bandeja despliega un **mini panel** con:
+La separación entre UI, controlador, servicio WARP y helper privilegiado está
+explicada en [ARCHITECTURE.md](docs/ARCHITECTURE.md). El helper PolicyKit solo
+acepta acciones y argumentos validados, fija la huella de la clave de
+Cloudflare y no se ejecuta desde scripts de mantenimiento de paquetes.
 
-- Un **punto de color** con el estado actual (verde conectado · naranja conectando ·
-  gris desconectado · rojo error).
-- Un **interruptor** para conectar o desconectar al instante, sin abrir la ventana.
-- Accesos a **Abrir panel** (exclusiones y apariencia) y **Actualizar**.
-
-## Desinstalación
-
-Elimina solo la interfaz y conserva tu configuración (Cloudflare WARP permanece instalado):
+## Desarrollo
 
 ```bash
-./instalar-warp-control-fedora.sh --uninstall
+python3 -m venv --system-site-packages .venv
+.venv/bin/pip install -e . pytest ruff
+.venv/bin/pytest -q
+.venv/bin/ruff check .
 ```
 
-## Cómo funciona
-
-| Componente | Detalle |
-|---|---|
-| Interfaz | Python 3 + GTK 3 (`Gtk.Stack` con pestañas, CSS propio) |
-| Bandeja | AppIndicator con icono SVG embebido en el script |
-| Backend | Envuelve `warp-cli` y consulta el estado del servicio `warp-svc` |
-| Configuración | JSON en `~/.config/warp-control/config.json` |
-| Instalación | `~/.local/lib/warp-control` + lanzador `.desktop` |
-
-## Stack
-
-Bash · Python 3 · GTK 3 · AppIndicator · Cloudflare `warp-cli` · Fedora/RPM
+El proyecto requiere Python 3.9+, GTK 3 y PyGObject para ejecutar la interfaz.
+Las pruebas de UI se omiten automáticamente cuando no hay una pantalla.
 
 ## Licencia
 
-MIT
+[MIT](LICENSE). Consulta [CHANGELOG.md](CHANGELOG.md) para el historial de la
+versión 2.0.0.

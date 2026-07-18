@@ -17,7 +17,7 @@ Decisiones principales:
 ## Estado de implementación (2026-07-17)
 
 - Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-- Tasks 1–10 terminadas y aprobadas mediante revisión de especificación y calidad.
+- Tasks 1–13 terminadas y aprobadas mediante revisión de especificación y calidad.
 - Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
 - Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
 - `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
@@ -30,5 +30,10 @@ Decisiones principales:
 - La detección fail-closed cubre la matriz oficial Cloudflare 2026 para RPM/APT; Arch solo ofrece instrucciones.
 - El helper PolicyKit fija el fingerprint Cloudflare, restringe origen de paquetes, acota procesos/JSONL y suspende polling durante el flujo inicial.
 - El instalador heredado ahora es un wrapper de siete líneas; el bootstrap usa snapshots con SHA-256 y la migración crea backups recuperables.
-- Verificación actual: 367 pruebas aprobadas, Ruff limpio, scripts validados y wheel con SVG empaquetados validado.
-- Siguiente tarea: Task 11, RPM de referencia.
+- RPM, DEB y PKGBUILD revisados con metadatos nativos; Arch fija una fuente Git a
+  commit completo y se declara experimental.
+- README renovado, documentación de arquitectura/instalación/compatibilidad,
+  changelog, seis capturas GTK reales y CI independiente de calidad/RPM/DEB/Arch.
+- Verificación actual: 385 pruebas aprobadas, 1 omitida (sin pantalla), Ruff
+  limpio, scripts/metadata validados y wheel con SVG empaquetados validado.
+- Siguiente tarea: Task 14, cierre de release y comprobación final de artefactos.

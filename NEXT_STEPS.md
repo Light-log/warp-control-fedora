@@ -1,5 +1,7 @@
 # Próximos pasos
 
-1. Ejecutar Task 11 del plan: RPM noarch con macros pyproject, AppStream, PolicyKit y validaciones.
-2. Continuar Tasks 12–14 con un implementador fresco y dos revisiones por tarea.
-3. Mantener ejecución directa en `main`, autorizada por el usuario.
+1. Completar Task 14: revisión final, pruebas, validación de artefactos y commit.
+2. Publicar los commits de `main` antes de ejecutar el PKGBUILD remoto; este fija un
+   commit existente en la historia que debe llegar al remoto.
+3. Si se crean releases, adjuntar RPM/DEB/Arch y sus checksums; no crear COPR ni
+   añadir repositorios de terceros desde scripts de paquete.
