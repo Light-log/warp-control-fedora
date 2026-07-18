@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import re
-import subprocess
 from pathlib import Path
 
 
@@ -47,6 +45,7 @@ def test_debian_control_is_architecture_independent_and_native() -> None:
         "pybuild-plugin-pyproject",
         "python3-all",
         "python3-setuptools",
+        "python3-wheel",
     ):
         assert dependency in build_depends
 
@@ -58,12 +57,15 @@ def test_debian_control_is_architecture_independent_and_native() -> None:
         "gir1.2-gtk-3.0",
         "gir1.2-ayatanaappindicator3-0.1",
         "python3-idna",
-        "policykit-1",
+        "pkexec",
+        "polkitd",
+        "apt",
         "curl",
         "gnupg",
         "systemd",
     ):
         assert dependency in depends
+    assert "policykit-1" not in depends
 
 
 def test_debian_rules_uses_pybuild_pyproject() -> None:
@@ -111,46 +113,23 @@ def test_arch_package_is_application_only_and_architecture_independent() -> None
     assert "polkit-1" not in pkgbuild
 
 
-def test_arch_source_is_a_pinned_local_release_tarball() -> None:
+def test_arch_source_is_a_pinned_https_git_checkout() -> None:
     pkgbuild = PKGBUILD.read_text(encoding="utf-8")
+    sources = _shell_array(pkgbuild, "source")
     checksums = _shell_array(pkgbuild, "sha256sums")
+    makedepends = _shell_array(pkgbuild, "makedepends")
 
-    assert 'source=("$pkgname-$pkgver.tar.gz")' in pkgbuild
+    commit = "e1b0ef24a367de0c1eea33e850c10d1c5cf02e55"
+    assert f"source_commit='{commit}'" in pkgbuild
+    assert sources == {
+        "$pkgname::git+https://github.com/Light-log/warp-control-fedora.git#commit=$source_commit"
+    }
+    assert re.fullmatch(r"[0-9a-f]{40}", commit)
+    assert "git" in makedepends
     assert len(checksums) == 1
-    checksum = next(iter(checksums))
-    assert re.fullmatch(r"[0-9a-f]{64}", checksum)
-    assert checksum == "a844eda518fe51e94d4e9ee12a5be5836f35a37e4bb08079304669cdabb3f58f"
-    assert "e1b0ef24a367de0c1eea33e850c10d1c5cf02e55" in pkgbuild
-    assert "SOURCE_DATE_EPOCH=1700000000" in pkgbuild
-    assert "SKIP" not in pkgbuild
-
-
-def test_arch_source_checksum_matches_the_documented_archive() -> None:
-    archive = subprocess.Popen(
-        [
-            "git",
-            "archive",
-            "--format=tar",
-            "--prefix=warp-control-2.0.0/",
-            "--mtime=@1700000000",
-            "e1b0ef24a367de0c1eea33e850c10d1c5cf02e55",
-        ],
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-    )
-    assert archive.stdout is not None
-    compressed = subprocess.run(
-        ["gzip", "-n"],
-        stdin=archive.stdout,
-        check=True,
-        capture_output=True,
-    ).stdout
-    archive.stdout.close()
-    assert archive.wait() == 0
-
-    assert hashlib.sha256(compressed).hexdigest() == (
-        "a844eda518fe51e94d4e9ee12a5be5836f35a37e4bb08079304669cdabb3f58f"
-    )
+    assert checksums == {"SKIP"}
+    assert "$pkgname-$pkgver.tar.gz" not in pkgbuild
+    assert 'cd "$srcdir/$pkgname"' in pkgbuild
 
 
 def test_native_packages_never_depend_on_or_install_cloudflare_warp() -> None:
