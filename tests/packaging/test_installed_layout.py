@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -12,6 +13,45 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 SPEC = ROOT / "packaging/rpm/warp-control.spec"
+
+
+def _clean_checkout(destination: Path) -> Path:
+    checkout = destination / "checkout"
+    checkout.mkdir()
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    for encoded in tracked:
+        if not encoded:
+            continue
+        relative = Path(os.fsdecode(encoded))
+        target = checkout / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / relative, target, follow_symlinks=False)
+    subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "add", "."],
+        cwd=checkout,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=checkout,
+        check=True,
+    )
+    return checkout
 
 
 def test_wheel_contains_runtime_assets_and_console_entry_point(tmp_path: Path) -> None:
@@ -73,6 +113,15 @@ def test_rpm_spec_uses_pyproject_macros_and_explicit_native_layout() -> None:
         "polkit",
     ):
         assert f"Requires:       {dependency}" in spec
+    for capability in (
+        "/usr/bin/curl",
+        "/usr/bin/dnf",
+        "/usr/bin/gpg",
+        "/usr/bin/systemctl",
+    ):
+        assert f"Requires:       {capability}" in spec
+    for build_dependency in ("python3-gobject", "gtk3", "python3-idna"):
+        assert f"BuildRequires:  {build_dependency}" in spec
 
 
 def test_appstream_metadata_identifies_the_desktop_application() -> None:
@@ -89,14 +138,16 @@ def test_appstream_metadata_identifies_the_desktop_application() -> None:
 
 
 def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
-    first = tmp_path / "first.tar.gz"
+    checkout = _clean_checkout(tmp_path)
+    first = checkout / "dist/first.tar.gz"
     second = tmp_path / "second.tar.gz"
     env = {**os.environ, "SOURCE_DATE_EPOCH": "1700000000"}
+    (checkout / "untracked-secret.txt").write_text("not for release", encoding="utf-8")
 
     for output in (first, second):
         subprocess.run(
             ["bash", "scripts/build-source-tarball.sh", str(output)],
-            cwd=ROOT,
+            cwd=checkout,
             env=env,
             check=True,
             capture_output=True,
@@ -114,6 +165,7 @@ def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
     assert names == sorted(names)
     assert "warp-control-2.0.0/pyproject.toml" in names
     assert "warp-control-2.0.0/packaging/rpm/warp-control.spec" in names
+    assert "warp-control-2.0.0/untracked-secret.txt" not in names
     assert all(member.uid == member.gid == 0 for member in members)
     assert all(member.mtime == 1700000000 for member in members)
     assert not any(
@@ -121,6 +173,24 @@ def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
         for name in names
         for excluded in ("/.git/", "/.venv/", "/build/", "/dist/")
     )
+
+
+def test_source_tarball_refuses_dirty_tracked_content(tmp_path: Path) -> None:
+    checkout = _clean_checkout(tmp_path)
+    output = tmp_path / "dirty.tar.gz"
+    with (checkout / "README.md").open("a", encoding="utf-8") as readme:
+        readme.write("\ncambio sin confirmar\n")
+
+    result = subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(output)],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "cambios sin confirmar" in result.stderr.lower()
+    assert not output.exists()
 
 
 def test_source_manifest_carries_native_packaging_assets() -> None:
@@ -134,3 +204,16 @@ def test_source_manifest_carries_native_packaging_assets() -> None:
         "recursive-include scripts *.sh",
     ):
         assert line in manifest
+
+
+def test_packaging_text_files_end_with_exactly_one_newline() -> None:
+    for relative in (
+        "MANIFEST.in",
+        "data/com.robler.warpcontrol.metainfo.xml",
+        "data/icons/com.robler.warpcontrol.svg",
+        "packaging/rpm/warp-control.spec",
+        "scripts/build-source-tarball.sh",
+    ):
+        content = (ROOT / relative).read_bytes()
+        assert content.endswith(b"\n"), relative
+        assert not content.endswith(b"\n\n"), relative

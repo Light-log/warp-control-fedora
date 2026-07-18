@@ -11,6 +11,9 @@ BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-pytest
+BuildRequires:  python3-gobject
+BuildRequires:  gtk3
+BuildRequires:  python3-idna
 BuildRequires:  desktop-file-utils
 BuildRequires:  appstream
 
@@ -19,6 +22,10 @@ Requires:       gtk3
 Requires:       libayatana-appindicator-gtk3
 Requires:       python3-idna
 Requires:       polkit
+Requires:       /usr/bin/curl
+Requires:       /usr/bin/dnf
+Requires:       /usr/bin/gpg
+Requires:       /usr/bin/systemctl
 
 %description
 WARP Control is a GTK desktop control panel for Cloudflare WARP. It displays

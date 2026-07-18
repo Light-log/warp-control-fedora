@@ -10,13 +10,15 @@ if [[ -z "$version" ]]; then
     exit 1
 fi
 
-output=${1:-"$repo_root/dist/warp-control-$version.tar.gz"}
-case "$output" in
-    /*) ;;
-    *) output="$PWD/$output" ;;
-esac
-output_dir=$(dirname -- "$output")
-mkdir -p -- "$output_dir"
+if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "El tarball de fuentes solo se crea desde un checkout Git" >&2
+    exit 1
+fi
+if ! git -C "$repo_root" diff --quiet --ignore-submodules -- \
+    || ! git -C "$repo_root" diff --cached --quiet --ignore-submodules --; then
+    echo "El checkout contiene cambios sin confirmar; crea un commit antes del tarball" >&2
+    exit 1
+fi
 
 source_date_epoch=${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" show -s --format=%ct HEAD)}
 if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
@@ -24,45 +26,26 @@ if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-file_list=$(mktemp)
+output=${1:-"$repo_root/dist/warp-control-$version.tar.gz"}
+case "$output" in
+    /*) ;;
+    *) output="$PWD/$output" ;;
+esac
+output_dir=$(dirname -- "$output")
+mkdir -p -- "$output_dir"
 archive=$(mktemp "$output_dir/.warp-control-source.XXXXXX.tar.gz")
 cleanup() {
-    rm -f -- "$file_list" "$archive"
+    rm -f -- "$archive"
 }
 trap cleanup EXIT
 
-if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "$repo_root" ls-files --cached --others --exclude-standard -z \
-        | LC_ALL=C sort -z >"$file_list"
-else
-    while IFS= read -r -d '' path; do
-        printf '%s\0' "${path#./}"
-    done < <(
-        cd -- "$repo_root"
-        find . \
-            -type d \( \
-                -name .git -o -name .venv -o -name build -o -name dist \
-                -o -name .pytest_cache -o -name .ruff_cache \
-                -o -name __pycache__ -o -name '*.egg-info' \
-            \) -prune -o \( -type f -o -type l \) -print0
-    ) | LC_ALL=C sort -z >"$file_list"
-fi
-
-tar -C "$repo_root" \
-    --null \
-    --files-from="$file_list" \
-    --sort=name \
-    --format=posix \
-    --pax-option=delete=atime,delete=ctime \
+git -C "$repo_root" archive \
+    --format=tar \
+    --prefix="warp-control-$version/" \
     --mtime="@$source_date_epoch" \
-    --owner=0 \
-    --group=0 \
-    --numeric-owner \
-    --transform="s,^,warp-control-$version/," \
-    -cf - \
+    HEAD \
     | gzip -n >"$archive"
 
 mv -f -- "$archive" "$output"
 trap - EXIT
-rm -f -- "$file_list"
 printf '%s\n' "$output"
