@@ -1,0 +1,39 @@
+Source: warp-control
+Section: net
+Priority: optional
+Maintainer: Carlos David Isturiz <light.log@proton.me>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+ pybuild-plugin-pyproject,
+ python3-all,
+ python3-setuptools,
+ python3-pytest,
+ python3-idna,
+ python3-gi,
+ gir1.2-gtk-3.0,
+ desktop-file-utils,
+ appstream
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/Light-log/warp-control-fedora
+
+Package: warp-control
+Architecture: all
+Depends:
+ ${python3:Depends},
+ ${misc:Depends},
+ python3-gi,
+ gir1.2-gtk-3.0,
+ gir1.2-ayatanaappindicator3-0.1,
+ python3-idna,
+ policykit-1,
+ curl,
+ gnupg,
+ systemd
+Description: desktop control panel for Cloudflare WARP
+ WARP Control is a GTK desktop application for viewing connection state,
+ managing split-tunnel exclusions, and customizing tray status colors.
+ .
+ Cloudflare WARP is installed separately and only after explicit confirmation;
+ this package never adds a third-party repository during package installation.

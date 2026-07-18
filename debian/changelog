@@ -1,0 +1,6 @@
+warp-control (2.0.0-1) unstable; urgency=medium
+
+  * Add native Debian and Ubuntu packaging.
+  * Install desktop, AppStream, icon, and authorized helper assets explicitly.
+
+ -- Carlos David Isturiz <light.log@proton.me>  Fri, 17 Jul 2026 00:00:00 -0400

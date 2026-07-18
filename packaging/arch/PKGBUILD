@@ -1,0 +1,55 @@
+# Maintainer: Carlos David Isturiz <light.log at proton dot me>
+
+pkgname=warp-control
+pkgver=2.0.0
+pkgrel=1
+pkgdesc='GTK desktop control panel for Cloudflare WARP (experimental on Arch)'
+arch=('any')
+url='https://github.com/Light-log/warp-control-fedora'
+license=('MIT')
+depends=(
+  'python'
+  'python-gobject'
+  'gtk3'
+  'libayatana-appindicator'
+  'python-idna'
+)
+makedepends=(
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+  'python-wheel'
+)
+checkdepends=('python-pytest')
+
+# The v2.0.0 source archive was generated from commit
+# e1b0ef24a367de0c1eea33e850c10d1c5cf02e55 with SOURCE_DATE_EPOCH=1700000000
+# via scripts/build-source-tarball.sh and is published beside the PKGBUILD.
+# Arch users must obtain warp-cli separately from a community source; no
+# privileged installation helper is bundled.
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('a844eda518fe51e94d4e9ee12a5be5836f35a37e4bb08079304669cdabb3f58f')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  python -m pytest -m 'not ui'
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+
+  install -Dm644 data/com.robler.warpcontrol.desktop \
+    "$pkgdir/usr/share/applications/com.robler.warpcontrol.desktop"
+  install -Dm644 data/com.robler.warpcontrol.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/com.robler.warpcontrol.metainfo.xml"
+  install -Dm644 data/icons/com.robler.warpcontrol.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
