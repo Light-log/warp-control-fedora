@@ -77,9 +77,9 @@ GUI-Cloudflare/
 │           └── install_dialog.py
 ├── data/
 │   ├── icons/
-│   ├── com.robler.warpcontrol.desktop
-│   ├── com.robler.warpcontrol.metainfo.xml
-│   └── com.robler.warpcontrol.policy
+│   ├── com.devruby.warpcontrol.desktop
+│   ├── com.devruby.warpcontrol.metainfo.xml
+│   └── com.devruby.warpcontrol.policy
 ├── packaging/
 │   ├── rpm/warp-control.spec
 │   └── arch/PKGBUILD

@@ -10,7 +10,7 @@ from warp_control.services.autostart import AutostartService
 DESKTOP_SOURCE = """[Desktop Entry]
 Name=WARP Control
 Exec=/some/installed/warp-control
-Icon=com.robler.warpcontrol
+Icon=com.devruby.warpcontrol
 Type=Application
 Categories=Network;Utility;
 StartupNotify=false
@@ -29,7 +29,7 @@ def service(tmp_path, **kwargs):
 
 
 def test_installed_desktop_entry_has_exact_required_metadata():
-    desktop_path = Path(__file__).parents[2] / "data" / "com.robler.warpcontrol.desktop"
+    desktop_path = Path(__file__).parents[2] / "data" / "com.devruby.warpcontrol.desktop"
     parser = configparser.ConfigParser(interpolation=None, strict=True)
     parser.optionxform = str
     parser.read_string(desktop_path.read_text(encoding="utf-8"))
@@ -39,7 +39,7 @@ def test_installed_desktop_entry_has_exact_required_metadata():
         "Type": "Application",
         "Name": "WARP Control",
         "Exec": "/usr/bin/warp-control",
-        "Icon": "com.robler.warpcontrol",
+        "Icon": "com.devruby.warpcontrol",
         "Categories": "Network;Utility;",
         "StartupNotify": "false",
     }
@@ -189,7 +189,7 @@ def test_autostart_uses_stable_appimage_executable_path(tmp_path):
     from warp_control.runtime import RuntimePaths
 
     image = tmp_path / "WARP-Control-2.0.0-x86_64.AppImage"
-    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop = tmp_path / "com.devruby.warpcontrol.desktop"
     desktop.write_text(DESKTOP_SOURCE, encoding="utf-8")
 
     paths = RuntimePaths.from_environment({
@@ -227,5 +227,5 @@ def test_autostart_respects_native_defaults_without_appimage(tmp_path):
     paths = RuntimePaths.from_environment({})
 
     assert paths.executable == Path("/usr/bin/warp-control")
-    assert paths.desktop_source == Path("/usr/share/applications/com.robler.warpcontrol.desktop")
+    assert paths.desktop_source == Path("/usr/share/applications/com.devruby.warpcontrol.desktop")
     assert paths.portable is False

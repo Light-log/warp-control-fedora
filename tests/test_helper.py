@@ -454,11 +454,11 @@ def test_libexec_entrypoints_are_fixed_and_argument_free():
 
 def test_policy_grants_only_two_exact_helpers_without_cached_authorization():
     root = Path(__file__).parents[1]
-    policy = ET.parse(root / "data/com.robler.warpcontrol.policy").getroot()
+    policy = ET.parse(root / "data/com.devruby.warpcontrol.policy").getroot()
     actions = policy.findall("action")
     assert {action.attrib["id"] for action in actions} == {
-        "com.robler.warpcontrol.install-warp",
-        "com.robler.warpcontrol.restart-warp",
+        "com.devruby.warpcontrol.install-warp",
+        "com.devruby.warpcontrol.restart-warp",
     }
     assert {
         action.find("./annotate[@key='org.freedesktop.policykit.exec.path']").text
@@ -468,4 +468,4 @@ def test_policy_grants_only_two_exact_helpers_without_cached_authorization():
         "/usr/libexec/warp-control/restart-warp",
     }
     assert all(action.find("./defaults/allow_active").text == "auth_admin" for action in actions)
-    assert "auth_admin_keep" not in (root / "data/com.robler.warpcontrol.policy").read_text()
+    assert "auth_admin_keep" not in (root / "data/com.devruby.warpcontrol.policy").read_text()

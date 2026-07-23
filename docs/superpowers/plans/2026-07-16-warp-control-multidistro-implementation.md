@@ -110,7 +110,7 @@ def test_normalize_host(value, expected):
 **Files:**
 - Create: `src/warp_control/icons.py`
 - Create: `src/warp_control/services/autostart.py`
-- Create: `data/com.robler.warpcontrol.desktop`
+- Create: `data/com.devruby.warpcontrol.desktop`
 - Create: `data/icons/cloudflare-template.svg`
 - Test: `tests/test_icons.py`
 - Test: `tests/services/test_autostart.py`
@@ -119,7 +119,7 @@ def test_normalize_host(value, expected):
 - [ ] **Step 2: Probar enable/disable idempotente del autostart bajo un HOME temporal**
 - [ ] **Step 3: Implementar renderizado de SVG con reemplazos validados y escritura atómica**
 - [ ] **Step 4: Implementar autostart con `Exec=/usr/bin/warp-control --background` y activación predeterminada en primer arranque**
-- [ ] **Step 5: Validar `desktop-file-validate data/com.robler.warpcontrol.desktop`**
+- [ ] **Step 5: Validar `desktop-file-validate data/com.devruby.warpcontrol.desktop`**
 - [ ] **Step 6: Commit `feat: add dynamic icons and autostart service`**
 
 ### Task 5: Construir la ventana única y las seis vistas aprobadas
@@ -202,7 +202,7 @@ def test_normalize_host(value, expected):
 - Create: `src/warp_control/privileged/runner.py`
 - Create: `src/warp_control/privileged/repositories.py`
 - Create: `src/warp_control/ui/install_dialog.py`
-- Create: `data/com.robler.warpcontrol.policy`
+- Create: `data/com.devruby.warpcontrol.policy`
 - Create: `libexec/warp-control/install-warp`
 - Create: `libexec/warp-control/restart-warp`
 - Test: `tests/test_helper.py`
@@ -236,7 +236,7 @@ def test_normalize_host(value, expected):
 
 **Files:**
 - Create: `packaging/rpm/warp-control.spec`
-- Create: `data/com.robler.warpcontrol.metainfo.xml`
+- Create: `data/com.devruby.warpcontrol.metainfo.xml`
 - Create: `MANIFEST.in`
 - Create: `scripts/build-source-tarball.sh`
 - Test: `tests/packaging/test_installed_layout.py`

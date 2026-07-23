@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 
-DEFAULT_DESKTOP_SOURCE = Path("/usr/share/applications/com.robler.warpcontrol.desktop")
+DEFAULT_DESKTOP_SOURCE = Path("/usr/share/applications/com.devruby.warpcontrol.desktop")
 DEFAULT_EXEC_PATH = Path("/usr/bin/warp-control")
 _EXEC_RESERVED_CHARACTERS = set(' \t"\'\\><~|&;$*?#()`%')
 

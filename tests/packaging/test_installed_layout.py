@@ -106,10 +106,10 @@ def test_rpm_spec_uses_pyproject_macros_and_explicit_native_layout() -> None:
         "%pyproject_install",
         "%pyproject_save_files warp_control",
         "%{_bindir}/warp-control",
-        "%{_datadir}/applications/com.robler.warpcontrol.desktop",
-        "%{_metainfodir}/com.robler.warpcontrol.metainfo.xml",
-        "%{_datadir}/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg",
-        "%{_datadir}/polkit-1/actions/com.robler.warpcontrol.policy",
+        "%{_datadir}/applications/com.devruby.warpcontrol.desktop",
+        "%{_metainfodir}/com.devruby.warpcontrol.metainfo.xml",
+        "%{_datadir}/icons/hicolor/scalable/apps/com.devruby.warpcontrol.svg",
+        "%{_datadir}/polkit-1/actions/com.devruby.warpcontrol.policy",
         "%{_libexecdir}/warp-control/install-warp",
         "%{_libexecdir}/warp-control/restart-warp",
     ):
@@ -136,16 +136,16 @@ def test_rpm_spec_uses_pyproject_macros_and_explicit_native_layout() -> None:
 
 
 def test_appstream_metadata_identifies_the_desktop_application() -> None:
-    root = ET.parse(ROOT / "data/com.robler.warpcontrol.metainfo.xml").getroot()
+    root = ET.parse(ROOT / "data/com.devruby.warpcontrol.metainfo.xml").getroot()
 
     assert root.attrib["type"] == "desktop-application"
-    assert root.findtext("id") == "com.robler.warpcontrol"
+    assert root.findtext("id") == "com.devruby.warpcontrol"
     assert root.findtext("metadata_license") == "CC0-1.0"
     assert root.findtext("project_license") == "MIT"
     launchable = root.find("launchable")
     assert launchable is not None
     assert launchable.attrib["type"] == "desktop-id"
-    assert launchable.text == "com.robler.warpcontrol.desktop"
+    assert launchable.text == "com.devruby.warpcontrol.desktop"
 
 
 def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
@@ -343,8 +343,8 @@ def test_source_manifest_carries_native_packaging_assets() -> None:
 def test_packaging_text_files_end_with_exactly_one_newline() -> None:
     for relative in (
         "MANIFEST.in",
-        "data/com.robler.warpcontrol.metainfo.xml",
-        "data/icons/com.robler.warpcontrol.svg",
+        "data/com.devruby.warpcontrol.metainfo.xml",
+        "data/icons/com.devruby.warpcontrol.svg",
         "packaging/rpm/warp-control.spec",
         "scripts/build-source-tarball.sh",
     ):

@@ -14,7 +14,7 @@ APPIMAGE_DIR = ROOT / "packaging/appimage"
 ENTRYPOINT = APPIMAGE_DIR / "entrypoint.py"
 SPEC = APPIMAGE_DIR / "warp-control.spec"
 APPRUN = APPIMAGE_DIR / "AppRun"
-DESKTOP = APPIMAGE_DIR / "com.robler.warpcontrol.desktop"
+DESKTOP = APPIMAGE_DIR / "com.devruby.warpcontrol.desktop"
 APPIMAGETOOL_SHA256 = APPIMAGE_DIR / "appimagetool.sha256"
 RUNTIME_SHA256 = APPIMAGE_DIR / "runtime.sha256"
 BUILDER = ROOT / "scripts/build-appimage.sh"
@@ -85,7 +85,7 @@ def test_desktop_entry_uses_portable_exec() -> None:
     )
     assert "Exec=/usr/bin/warp-control" not in text
     assert re.search(r"^Name=WARP Control$", text, flags=re.MULTILINE)
-    assert re.search(r"^Icon=com\.robler\.warpcontrol$", text, flags=re.MULTILINE)
+    assert re.search(r"^Icon=com\.devruby\.warpcontrol$", text, flags=re.MULTILINE)
     assert re.search(r"^Type=Application$", text, flags=re.MULTILINE)
 
 
@@ -103,7 +103,7 @@ def test_apprun_exports_desktop_file_under_appdir() -> None:
     text = _read(APPRUN)
     assert (
         'export WARP_CONTROL_DESKTOP_FILE='
-        '"$APPDIR/usr/share/applications/com.robler.warpcontrol.desktop"'
+        '"$APPDIR/usr/share/applications/com.devruby.warpcontrol.desktop"'
     ) in text
 
 
@@ -152,7 +152,7 @@ def test_apprun_replaces_host_runtime_paths(tmp_path: Path) -> None:
         str(appdir / "usr/bin/_internal/gi_typelibs"),
         f"{appdir}/usr/bin/_internal/share:{appdir}/usr/share",
         str(image),
-        str(appdir / "usr/share/applications/com.robler.warpcontrol.desktop"),
+        str(appdir / "usr/share/applications/com.devruby.warpcontrol.desktop"),
     ]
 
 
@@ -644,11 +644,11 @@ def test_builder_fake_tool_exercises_extract_verify_and_smoke(tmp_path: Path) ->
     fake_repo = tmp_path / "repo"
     for relative in (
         "packaging/appimage/AppRun",
-        "packaging/appimage/com.robler.warpcontrol.desktop",
+        "packaging/appimage/com.devruby.warpcontrol.desktop",
         "packaging/appimage/warp-control.spec",
         "packaging/appimage/verify_tree.py",
-        "data/icons/com.robler.warpcontrol.svg",
-        "data/com.robler.warpcontrol.metainfo.xml",
+        "data/icons/com.devruby.warpcontrol.svg",
+        "data/com.devruby.warpcontrol.metainfo.xml",
         "scripts/build-appimage.sh",
     ):
         source = ROOT / relative

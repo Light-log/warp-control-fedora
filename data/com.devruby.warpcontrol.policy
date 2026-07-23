@@ -4,9 +4,9 @@
   "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <vendor>WARP Control</vendor>
-  <vendor_url>https://github.com/robler/warp-control</vendor_url>
+  <vendor_url>https://github.com/Light-log/warp-control-fedora</vendor_url>
 
-  <action id="com.robler.warpcontrol.install-warp">
+  <action id="com.devruby.warpcontrol.install-warp">
     <description>Instalar el cliente oficial Cloudflare WARP</description>
     <message>Se necesita autenticación para añadir el repositorio oficial e instalar Cloudflare WARP.</message>
     <defaults>
@@ -18,7 +18,7 @@
     <annotate key="org.freedesktop.policykit.exec.allow_gui">false</annotate>
   </action>
 
-  <action id="com.robler.warpcontrol.restart-warp">
+  <action id="com.devruby.warpcontrol.restart-warp">
     <description>Reiniciar el servicio Cloudflare WARP</description>
     <message>Se necesita autenticación para reiniciar warp-svc.</message>
     <defaults>

@@ -105,7 +105,7 @@ Expected: PASS. Commit: `build: make Arch release sources reproducible`.
 ```python
 def test_appimage_runtime_uses_original_file(tmp_path: Path) -> None:
     image = tmp_path / "WARP-Control.AppImage"
-    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop = tmp_path / "com.devruby.warpcontrol.desktop"
     paths = RuntimePaths.from_environment({
         "APPIMAGE": str(image),
         "WARP_CONTROL_DESKTOP_FILE": str(desktop),
@@ -149,7 +149,7 @@ class RuntimePaths:
         if not appimage:
             return cls(
                 Path("/usr/bin/warp-control"),
-                Path("/usr/share/applications/com.robler.warpcontrol.desktop"),
+                Path("/usr/share/applications/com.devruby.warpcontrol.desktop"),
                 False,
             )
         executable = _absolute_path(appimage, "APPIMAGE")
@@ -160,7 +160,7 @@ class RuntimePaths:
         return cls(executable, desktop, True)
 ```
 
-Native defaults remain `/usr/bin/warp-control` and `/usr/share/applications/com.robler.warpcontrol.desktop`. Portable mode requires an absolute `APPIMAGE` and never persists `/tmp/.mount_*`.
+Native defaults remain `/usr/bin/warp-control` and `/usr/share/applications/com.devruby.warpcontrol.desktop`. Portable mode requires an absolute `APPIMAGE` and never persists `/tmp/.mount_*`.
 
 - [ ] **Step 4: Inject paths into autostart**
 
@@ -178,7 +178,7 @@ Expected: PASS. Commit: `feat: support stable portable runtime paths`.
 - Create: `packaging/appimage/entrypoint.py`
 - Create: `packaging/appimage/warp-control.spec`
 - Create: `packaging/appimage/AppRun`
-- Create: `packaging/appimage/com.robler.warpcontrol.desktop`
+- Create: `packaging/appimage/com.devruby.warpcontrol.desktop`
 - Create: `packaging/appimage/appimagetool.sha256`
 - Create: `scripts/build-appimage.sh`
 - Create: `tests/packaging/test_appimage.py`
@@ -212,7 +212,7 @@ AppRun exports:
 
 ```bash
 export WARP_CONTROL_EXECUTABLE="${APPIMAGE:-$APPDIR/AppRun}"
-export WARP_CONTROL_DESKTOP_FILE="$APPDIR/usr/share/applications/com.robler.warpcontrol.desktop"
+export WARP_CONTROL_DESKTOP_FILE="$APPDIR/usr/share/applications/com.devruby.warpcontrol.desktop"
 exec "$APPDIR/usr/bin/warp-control" "$@"
 ```
 
@@ -272,8 +272,8 @@ Install beneath `${WARP_CONTROL_INSTALL_ROOT:-$HOME/.local}` (override accepted 
 ```text
 opt/warp-control/WARP-Control-<version>-<arch>.AppImage
 bin/warp-control
-share/applications/com.robler.warpcontrol.desktop
-share/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg
+share/applications/com.devruby.warpcontrol.desktop
+share/icons/hicolor/scalable/apps/com.devruby.warpcontrol.svg
 ```
 
 Snapshot first; extract only desktop/icon; rewrite `Exec=` to the local launcher. Replace the launcher only if absent or already pointing into `opt/warp-control`. Never touch config, autostart, WARP or native package files.
@@ -326,8 +326,8 @@ Run:
 
 ```bash
 .venv/bin/pytest tests/packaging/test_metadata.py -q
-desktop-file-validate data/com.robler.warpcontrol.desktop
-appstreamcli validate --no-net data/com.robler.warpcontrol.metainfo.xml
+desktop-file-validate data/com.devruby.warpcontrol.desktop
+appstreamcli validate --no-net data/com.devruby.warpcontrol.metainfo.xml
 ```
 
 Expected: PASS. Commit: `ci: verify native packages across supported Linux families`.
@@ -467,8 +467,8 @@ PYTHONPATH=src .venv/bin/pytest -q
 .venv/bin/ruff check .
 PYTHONPATH=src .venv/bin/python -m warp_control --smoke-test
 bash -n scripts/*.sh packaging/appimage/AppRun
-desktop-file-validate data/com.robler.warpcontrol.desktop packaging/appimage/com.robler.warpcontrol.desktop
-appstreamcli validate --no-net data/com.robler.warpcontrol.metainfo.xml
+desktop-file-validate data/com.devruby.warpcontrol.desktop packaging/appimage/com.devruby.warpcontrol.desktop
+appstreamcli validate --no-net data/com.devruby.warpcontrol.metainfo.xml
 git diff --check
 ```
 

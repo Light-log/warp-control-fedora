@@ -14,13 +14,13 @@ def test_native_runtime_uses_system_defaults(monkeypatch):
     paths = RuntimePaths.from_environment({})
 
     assert paths.executable == Path("/usr/bin/warp-control")
-    assert paths.desktop_source == Path("/usr/share/applications/com.robler.warpcontrol.desktop")
+    assert paths.desktop_source == Path("/usr/share/applications/com.devruby.warpcontrol.desktop")
     assert paths.portable is False
 
 
 def test_appimage_runtime_uses_original_file(tmp_path):
     image = tmp_path / "WARP-Control.AppImage"
-    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop = tmp_path / "com.devruby.warpcontrol.desktop"
 
     paths = RuntimePaths.from_environment({
         "APPIMAGE": str(image),
@@ -82,7 +82,7 @@ def test_appimage_rejects_nul_in_path(tmp_path):
 
 
 def test_appimage_rejects_relative_appimage_path(tmp_path):
-    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop = tmp_path / "com.devruby.warpcontrol.desktop"
 
     with pytest.raises(ValueError, match="APPIMAGE must be absolute"):
         RuntimePaths.from_environment({
@@ -97,14 +97,14 @@ def test_appimage_rejects_relative_appimage_path(tmp_path):
         ("APPIMAGE", "/tmp/.mount_WARP123/AppRun"),
         (
             "WARP_CONTROL_DESKTOP_FILE",
-            "/tmp/.mount_WARP123/usr/share/applications/com.robler.warpcontrol.desktop",
+            "/tmp/.mount_WARP123/usr/share/applications/com.devruby.warpcontrol.desktop",
         ),
     ],
 )
 def test_appimage_rejects_ephemeral_mount_paths(variable, value):
     environment = {
         "APPIMAGE": "/opt/WARP-Control.AppImage",
-        "WARP_CONTROL_DESKTOP_FILE": "/opt/com.robler.warpcontrol.desktop",
+        "WARP_CONTROL_DESKTOP_FILE": "/opt/com.devruby.warpcontrol.desktop",
     }
     environment[variable] = value
 
@@ -114,7 +114,7 @@ def test_appimage_rejects_ephemeral_mount_paths(variable, value):
 
 def test_desktop_source_control_character_rejection(tmp_path):
     image = tmp_path / "WARP-Control.AppImage"
-    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop = tmp_path / "com.devruby.warpcontrol.desktop"
 
     with pytest.raises(ValueError, match="WARP_CONTROL_DESKTOP_FILE is invalid"):
         RuntimePaths.from_environment({

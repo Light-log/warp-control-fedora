@@ -358,19 +358,19 @@ mkdir -p -- \
 cp -a -- "$payload/." "$appdir/usr/bin/"
 install -m 0755 -- "$repository/packaging/appimage/AppRun" "$appdir/AppRun"
 install -m 0644 -- \
-    "$repository/packaging/appimage/com.robler.warpcontrol.desktop" \
-    "$appdir/com.robler.warpcontrol.desktop"
+    "$repository/packaging/appimage/com.devruby.warpcontrol.desktop" \
+    "$appdir/com.devruby.warpcontrol.desktop"
 install -m 0644 -- \
-    "$repository/packaging/appimage/com.robler.warpcontrol.desktop" \
-    "$appdir/usr/share/applications/com.robler.warpcontrol.desktop"
-install -m 0644 -- "$repository/data/icons/com.robler.warpcontrol.svg" \
-    "$appdir/com.robler.warpcontrol.svg"
-install -m 0644 -- "$repository/data/icons/com.robler.warpcontrol.svg" \
+    "$repository/packaging/appimage/com.devruby.warpcontrol.desktop" \
+    "$appdir/usr/share/applications/com.devruby.warpcontrol.desktop"
+install -m 0644 -- "$repository/data/icons/com.devruby.warpcontrol.svg" \
+    "$appdir/com.devruby.warpcontrol.svg"
+install -m 0644 -- "$repository/data/icons/com.devruby.warpcontrol.svg" \
     "$appdir/.DirIcon"
-install -m 0644 -- "$repository/data/icons/com.robler.warpcontrol.svg" \
-    "$appdir/usr/share/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg"
-install -m 0644 -- "$repository/data/com.robler.warpcontrol.metainfo.xml" \
-    "$appdir/usr/share/metainfo/com.robler.warpcontrol.metainfo.xml"
+install -m 0644 -- "$repository/data/icons/com.devruby.warpcontrol.svg" \
+    "$appdir/usr/share/icons/hicolor/scalable/apps/com.devruby.warpcontrol.svg"
+install -m 0644 -- "$repository/data/com.devruby.warpcontrol.metainfo.xml" \
+    "$appdir/usr/share/metainfo/com.devruby.warpcontrol.metainfo.xml"
 
 find "$appdir" -exec touch -h -d "@$source_epoch" -- {} +
 

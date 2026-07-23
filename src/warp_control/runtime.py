@@ -8,7 +8,7 @@ from typing import Mapping
 
 NATIVE_EXECUTABLE = Path("/usr/bin/warp-control")
 NATIVE_DESKTOP_SOURCE = Path(
-    "/usr/share/applications/com.robler.warpcontrol.desktop"
+    "/usr/share/applications/com.devruby.warpcontrol.desktop"
 )
 
 

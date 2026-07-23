@@ -21,6 +21,6 @@ if [ -f "$internal/gdk-pixbuf/loaders.cache" ]; then
 fi
 
 export WARP_CONTROL_EXECUTABLE="${APPIMAGE:-$APPDIR/AppRun}"
-export WARP_CONTROL_DESKTOP_FILE="$APPDIR/usr/share/applications/com.robler.warpcontrol.desktop"
+export WARP_CONTROL_DESKTOP_FILE="$APPDIR/usr/share/applications/com.devruby.warpcontrol.desktop"
 
 exec "$APPDIR/usr/bin/warp-control" "$@"

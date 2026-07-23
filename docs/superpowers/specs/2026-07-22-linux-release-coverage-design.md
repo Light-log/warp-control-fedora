@@ -35,9 +35,9 @@ Los paquetes nativos mantienen el layout existente:
 
 - `/usr/bin/warp-control`
 - módulos Python bajo el directorio `site-packages` de la distribución
-- `/usr/share/applications/com.robler.warpcontrol.desktop`
-- `/usr/share/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg`
-- `/usr/share/metainfo/com.robler.warpcontrol.metainfo.xml`
+- `/usr/share/applications/com.devruby.warpcontrol.desktop`
+- `/usr/share/icons/hicolor/scalable/apps/com.devruby.warpcontrol.svg`
+- `/usr/share/metainfo/com.devruby.warpcontrol.metainfo.xml`
 - PolicyKit y helpers únicamente en RPM/DEB compatibles
 
 Los datos del usuario permanecen en:
@@ -50,8 +50,8 @@ La instalación AppImage será local y reversible:
 
 - `~/.local/opt/warp-control/WARP-Control-<versión>-<arquitectura>.AppImage`
 - `~/.local/bin/warp-control` como enlace al AppImage activo
-- `~/.local/share/applications/com.robler.warpcontrol.desktop`
-- `~/.local/share/icons/hicolor/scalable/apps/com.robler.warpcontrol.svg`
+- `~/.local/share/applications/com.devruby.warpcontrol.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/com.devruby.warpcontrol.svg`
 
 Actualizar o eliminar el AppImage no borra la configuración ni modifica `warp-svc`.
 

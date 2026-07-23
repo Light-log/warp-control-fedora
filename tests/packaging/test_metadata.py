@@ -82,10 +82,10 @@ def test_debian_install_manifest_is_explicit() -> None:
     entries = set(INSTALL.read_text(encoding="utf-8").splitlines())
 
     assert entries == {
-        "data/com.robler.warpcontrol.desktop usr/share/applications/",
-        "data/com.robler.warpcontrol.metainfo.xml usr/share/metainfo/",
-        "data/icons/com.robler.warpcontrol.svg usr/share/icons/hicolor/scalable/apps/",
-        "data/com.robler.warpcontrol.policy usr/share/polkit-1/actions/",
+        "data/com.devruby.warpcontrol.desktop usr/share/applications/",
+        "data/com.devruby.warpcontrol.metainfo.xml usr/share/metainfo/",
+        "data/icons/com.devruby.warpcontrol.svg usr/share/icons/hicolor/scalable/apps/",
+        "data/com.devruby.warpcontrol.policy usr/share/polkit-1/actions/",
         "libexec/warp-control/install-warp usr/libexec/warp-control/",
         "libexec/warp-control/restart-warp usr/libexec/warp-control/",
     }
