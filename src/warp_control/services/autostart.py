@@ -6,6 +6,34 @@ from typing import Optional
 
 
 DEFAULT_DESKTOP_SOURCE = Path("/usr/share/applications/com.robler.warpcontrol.desktop")
+DEFAULT_EXEC_PATH = Path("/usr/bin/warp-control")
+_EXEC_RESERVED_CHARACTERS = set(' \t"\'\\><~|&;$*?#()`%')
+
+
+def _desktop_exec_argument(path: Path) -> str:
+    """Serialize an executable path as one freedesktop Exec argument."""
+    value = str(path)
+    if not value or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("exec_path is invalid: must contain only printable ASCII")
+    if "=" in value:
+        raise ValueError("exec_path is invalid: must not contain '='")
+    if any(ord(character) > 127 for character in value):
+        raise ValueError("exec_path is invalid: must contain only printable ASCII")
+    if not any(character in _EXEC_RESERVED_CHARACTERS for character in value):
+        return value
+
+    command_line = "".join(
+        "%%"
+        if character == "%"
+        else f"\\{character}"
+        if character in {'"', "`", "$"}
+        else "\\\\"
+        if character == "\\"
+        else character
+        for character in value
+    )
+    desktop_entry_value = command_line.replace("\\", "\\\\")
+    return f'"{desktop_entry_value}"'
 
 
 def _default_config_home() -> Path:
@@ -24,7 +52,7 @@ class AutostartService:
         config_home: Optional[Path] = None,
         path: Optional[Path] = None,
         desktop_source: Optional[Path] = None,
-        exec_path: Path = Path("/usr/bin/warp-control"),
+        exec_path: Path = DEFAULT_EXEC_PATH,
     ):
         base = Path(config_home) if config_home is not None else _default_config_home()
         self.path = (
@@ -66,7 +94,7 @@ class AutostartService:
         found_enabled = False
         for index, line in enumerate(lines):
             if line.startswith("Exec="):
-                lines[index] = f"Exec={self.exec_path} --background"
+                lines[index] = f"Exec={_desktop_exec_argument(self.exec_path)} --background"
                 replaced_exec = True
             elif line.startswith("X-GNOME-Autostart-enabled="):
                 lines[index] = "X-GNOME-Autostart-enabled=true"

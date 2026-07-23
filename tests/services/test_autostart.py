@@ -20,10 +20,10 @@ StartupNotify=false
 def service(tmp_path, **kwargs):
     source = tmp_path / "installed.desktop"
     source.write_text(DESKTOP_SOURCE, encoding="utf-8")
+    kwargs.setdefault("exec_path", "/usr/bin/warp-control")
+    kwargs.setdefault("desktop_source", source)
     return AutostartService(
         config_home=tmp_path / "config",
-        desktop_source=source,
-        exec_path="/usr/bin/warp-control",
         **kwargs,
     )
 
@@ -95,6 +95,43 @@ def test_enable_creates_expected_entry_atomically_with_mode(tmp_path):
     assert autostart.is_enabled() is True
 
 
+def test_enable_serializes_reserved_executable_path_characters(tmp_path):
+    executable = Path('/opt/WARP Control/warp "quote"\\slash%$`')
+    autostart = service(tmp_path, exec_path=executable)
+
+    path = autostart.enable()
+    persisted = path.read_text(encoding="utf-8")
+    expected_exec = r'Exec="/opt/WARP Control/warp \\"quote\\"\\\\slash%%\\$\\`" --background'
+
+    assert expected_exec in persisted.splitlines()
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    parser.optionxform = str
+    parser.read_string(persisted)
+    assert parser["Desktop Entry"]["Exec"] == expected_exec.removeprefix("Exec=")
+    assert parser["Desktop Entry"]["Name"] == "WARP Control"
+
+
+def test_enable_rejects_control_character_in_executable_path(tmp_path):
+    autostart = service(tmp_path, exec_path=tmp_path / "warp\ncontrol")
+
+    with pytest.raises(ValueError, match="exec_path is invalid"):
+        autostart.enable()
+
+
+@pytest.mark.parametrize(
+    ("executable", "error"),
+    [
+        (Path("/opt/warp=control"), "must not contain '='"),
+        (Path("/opt/warp-control-ñ"), "printable ASCII"),
+    ],
+)
+def test_enable_rejects_nonconforming_executable_path(executable, error, tmp_path):
+    autostart = service(tmp_path, exec_path=executable)
+
+    with pytest.raises(ValueError, match=error):
+        autostart.enable()
+
+
 def test_enable_and_disable_are_idempotent(tmp_path):
     autostart = service(tmp_path)
 
@@ -145,3 +182,50 @@ def test_enable_propagates_missing_source_error(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         autostart.enable()
+
+
+def test_autostart_uses_stable_appimage_executable_path(tmp_path):
+    """Verify autostart receives stable AppImage path, not /tmp/.mount."""
+    from warp_control.runtime import RuntimePaths
+
+    image = tmp_path / "WARP-Control-2.0.0-x86_64.AppImage"
+    desktop = tmp_path / "com.robler.warpcontrol.desktop"
+    desktop.write_text(DESKTOP_SOURCE, encoding="utf-8")
+
+    paths = RuntimePaths.from_environment({
+        "APPIMAGE": str(image),
+        "WARP_CONTROL_DESKTOP_FILE": str(desktop),
+    })
+
+    autostart = service(tmp_path, exec_path=paths.executable)
+    assert autostart.exec_path == image
+    assert "/tmp/.mount" not in str(autostart.exec_path)
+
+
+def test_autostart_receives_runtime_paths_for_portable(tmp_path):
+    """Verify autostart uses custom desktop_source from RuntimePaths."""
+    from warp_control.runtime import RuntimePaths
+
+    image = tmp_path / "WARP-Control.AppImage"
+    desktop = tmp_path / "portable.desktop"
+    desktop.write_text(DESKTOP_SOURCE, encoding="utf-8")
+
+    paths = RuntimePaths.from_environment({
+        "APPIMAGE": str(image),
+        "WARP_CONTROL_DESKTOP_FILE": str(desktop),
+    })
+
+    autostart = service(tmp_path, desktop_source=paths.desktop_source, exec_path=paths.executable)
+    assert autostart.desktop_source == desktop
+    assert autostart.exec_path == image
+
+
+def test_autostart_respects_native_defaults_without_appimage(tmp_path):
+    """Verify autostart uses native defaults when APPIMAGE is not set."""
+    from warp_control.runtime import RuntimePaths
+
+    paths = RuntimePaths.from_environment({})
+
+    assert paths.executable == Path("/usr/bin/warp-control")
+    assert paths.desktop_source == Path("/usr/share/applications/com.robler.warpcontrol.desktop")
+    assert paths.portable is False

@@ -618,6 +618,7 @@ def _build_runtime(config: Config):
         raise RuntimeError("no hay una sesión gráfica GTK disponible")
 
     from warp_control.commands import CommandRunner
+    from warp_control.runtime import RuntimePaths
     from warp_control.services.autostart import AutostartService
     from warp_control.services.diagnostics import (
         DiagnosticsService,
@@ -630,6 +631,7 @@ def _build_runtime(config: Config):
     from warp_control.ui.assets import runtime_asset_path
     from warp_control.ui.main_window import MainWindow
 
+    runtime_paths = RuntimePaths.from_environment()
     runner = CommandRunner()
     logger = configure_logging()
     holder = {}
@@ -652,7 +654,10 @@ def _build_runtime(config: Config):
         icons=IconRenderer(
             runtime_asset_path("cloudflare-template.svg"), _cache_dir()
         ),
-        autostart=AutostartService(),
+        autostart=AutostartService(
+            desktop_source=runtime_paths.desktop_source,
+            exec_path=runtime_paths.executable,
+        ),
         diagnostics=DiagnosticsService(runner),
         tasks=tasks,
         scheduler=PeriodicScheduler(GLib.timeout_add_seconds, GLib.source_remove),
