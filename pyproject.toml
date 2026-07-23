@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=59"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "warp-control"
 version = "2.0.0"
 description = "Desktop control panel for Cloudflare WARP"
 requires-python = ">=3.9"
-dependencies = ["idna>=3.6"]
+dependencies = ["idna>=2.10"]
 
 [project.scripts]
 warp-control = "warp_control.__main__:main"

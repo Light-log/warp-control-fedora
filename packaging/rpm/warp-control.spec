@@ -11,6 +11,7 @@ BuildArch:      noarch
 BuildRequires:  python3-devel
 BuildRequires:  pyproject-rpm-macros
 BuildRequires:  python3-pytest
+BuildRequires:  python3-pyyaml
 BuildRequires:  python3-gobject
 BuildRequires:  gtk3
 BuildRequires:  python3-idna
@@ -37,14 +38,24 @@ confirmation; this package does not install it as a dependency.
 %autosetup -p1
 
 %generate_buildrequires
+%if 0%{?rhel} != 9
 %pyproject_buildrequires
+%endif
 
 %build
+%if 0%{?rhel} == 9
+%{python3} setup.py build
+%else
 %pyproject_wheel
+%endif
 
 %install
+%if 0%{?rhel} == 9
+%{python3} setup.py install --skip-build --root %{buildroot}
+%else
 %pyproject_install
 %pyproject_save_files warp_control
+%endif
 
 install -Dpm 0644 data/com.devruby.warpcontrol.desktop \
   %{buildroot}%{_datadir}/applications/com.devruby.warpcontrol.desktop
@@ -60,13 +71,19 @@ install -Dpm 0755 libexec/warp-control/restart-warp \
   %{buildroot}%{_libexecdir}/warp-control/restart-warp
 
 %check
-%pytest -m "not ui"
+%pytest -m "not ui" tests/test_*.py tests/installers tests/services tests/ui
 desktop-file-validate \
   %{buildroot}%{_datadir}/applications/com.devruby.warpcontrol.desktop
 appstreamcli validate --no-net \
   %{buildroot}%{_metainfodir}/com.devruby.warpcontrol.metainfo.xml
 
+%if 0%{?rhel} == 9
+%files
+%{python3_sitelib}/warp_control/
+%{python3_sitelib}/warp_control-*.egg-info/
+%else
 %files -f %{pyproject_files}
+%endif
 %license LICENSE
 %doc README.md
 %{_bindir}/warp-control

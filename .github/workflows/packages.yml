@@ -8,64 +8,276 @@ permissions:
   contents: read
 
 jobs:
-  rpm:
+  source:
     runs-on: ubuntu-24.04
-    container: fedora:44
+    outputs:
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Read release metadata
+        id: release
+        run: |
+          version=$(sed -n 's/^VERSION=//p' packaging/release.env)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+             [[ $(grep -c '^VERSION=' packaging/release.env) -ne 1 ]]; then
+            echo "packaging/release.env must contain exactly one semantic VERSION" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build deterministic source archive
+        run: scripts/build-source-tarball.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: dist/warp-control-${{ steps.release.outputs.version }}.tar.gz
+          if-no-files-found: error
+
+  rpm:
+    needs: source
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: fedora43
+            container: fedora:43
+            family: fedora
+            major: 43
+            dist_tag: fc43
+          - target: fedora44
+            container: fedora:44
+            family: fedora
+            major: 44
+            dist_tag: fc44
+          - target: el9
+            container: rockylinux/rockylinux:9
+            family: el
+            major: 9
+            dist_tag: el9
+          - target: el10
+            container: rockylinux/rockylinux:10
+            family: el
+            major: 10
+            dist_tag: el10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
+      - name: Enable CRB
+        if: matrix.family == 'el'
+        run: |
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
+      - name: Enable EPEL
+        if: matrix.family == 'el'
+        run: |
+          dnf -y install \
+            "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${{ matrix.major }}.noarch.rpm"
       - name: Install RPM build requirements
         run: |
-          dnf -y install git rpm-build python3-devel pyproject-rpm-macros python3-pytest \
+          dnf -y install rpm-build python3-devel pyproject-rpm-macros python3-pytest \
             python3-setuptools python3-pip python3-packaging python3-gobject gtk3 \
-            python3-idna desktop-file-utils appstream
-      - name: Build source archive and RPM
+            python3-idna python3-pyyaml desktop-file-utils appstream
+      - name: Build target-native RPM
         run: |
-          scripts/build-source-tarball.sh
           rpmbuild -ba packaging/rpm/warp-control.spec \
+            --define "dist .${{ matrix.dist_tag }}" \
             --define "_sourcedir $GITHUB_WORKSPACE/dist" \
             --define "_topdir $GITHUB_WORKSPACE/packaging/rpm"
       - uses: actions/upload-artifact@v4
         with:
-          name: rpm
-          path: packaging/rpm/RPMS/noarch/*.rpm
+          name: rpm-${{ matrix.target }}
+          path: packaging/rpm/RPMS/noarch/warp-control-*.${{ matrix.dist_tag }}.noarch.rpm
+          if-no-files-found: error
+
+  rpm-install:
+    needs: rpm
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: fedora43
+            container: fedora:43
+            family: fedora
+            major: 43
+            dist_tag: fc43
+          - target: fedora44
+            container: fedora:44
+            family: fedora
+            major: 44
+            dist_tag: fc44
+          - target: el9
+            container: rockylinux/rockylinux:9
+            family: el
+            major: 9
+            dist_tag: el9
+          - target: el10
+            container: rockylinux/rockylinux:10
+            family: el
+            major: 10
+            dist_tag: el10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rpm-${{ matrix.target }}
+          path: package
+      - name: Enable CRB
+        if: matrix.family == 'el'
+        run: |
+          dnf -y install dnf-plugins-core
+          dnf config-manager --set-enabled crb
+      - name: Enable EPEL
+        if: matrix.family == 'el'
+        run: |
+          dnf -y install \
+            "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${{ matrix.major }}.noarch.rpm"
+      - name: Install and smoke-test RPM
+        run: |
+          dnf -y install package/warp-control-*.${{ matrix.dist_tag }}.noarch.rpm
+          /usr/bin/warp-control --smoke-test
 
   deb:
+    needs: source
     runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: ubuntu2204
+            container: ubuntu:22.04
+          - target: ubuntu2404
+            container: ubuntu:24.04
+          - target: ubuntu2604
+            container: ubuntu:26.04
+          - target: debian12
+            container: debian:12
+          - target: debian13
+            container: debian:13
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      VERSION: ${{ needs.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
       - name: Install Debian build requirements
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential debhelper dh-python \
+          apt-get update
+          apt-get install -y build-essential debhelper dh-python \
             pybuild-plugin-pyproject python3-all python3-setuptools python3-wheel \
-            python3-pytest python3-idna python3-gi gir1.2-gtk-3.0 \
+            python3-pytest python3-yaml python3-idna python3-gi gir1.2-gtk-3.0 \
             desktop-file-utils appstream lintian
+      - name: Stage shared source archive
+        run: |
+          mkdir build
+          cp "dist/warp-control-$VERSION.tar.gz" "build/warp-control_$VERSION.orig.tar.gz"
+          tar --extract --gzip --file="dist/warp-control-$VERSION.tar.gz" --directory=build
       - name: Build and lint DEB
+        working-directory: build/warp-control-${{ needs.source.outputs.version }}
         run: |
           dpkg-buildpackage -us -uc -b
-          lintian --fail-on error ../warp-control_*.changes
+          lintian --profile debian --fail-on error ../warp-control_*.changes
       - uses: actions/upload-artifact@v4
         with:
-          name: deb
-          path: ../warp-control_*_all.deb
+          name: deb-${{ matrix.target }}
+          path: build/warp-control_*_all.deb
+          if-no-files-found: error
+
+  deb-install:
+    needs: deb
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: ubuntu2204
+            container: ubuntu:22.04
+          - target: ubuntu2404
+            container: ubuntu:24.04
+          - target: ubuntu2604
+            container: ubuntu:26.04
+          - target: debian12
+            container: debian:12
+          - target: debian13
+            container: debian:13
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb-${{ matrix.target }}
+          path: package
+      - name: Install and smoke-test DEB
+        run: |
+          apt-get update
+          apt-get install -y ./package/warp-control_*_all.deb
+          /usr/bin/warp-control --smoke-test
 
   arch:
+    needs: source
     runs-on: ubuntu-24.04
     container: archlinux:latest
+    env:
+      VERSION: ${{ needs.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
+          path: dist
       - name: Install Arch build requirements
         run: |
-          pacman -Syu --noconfirm --needed base-devel git python python-build \
+          pacman -Syu --noconfirm --needed base-devel python python-build \
             python-installer python-setuptools python-wheel python-pytest \
-            python-gobject gtk3 libayatana-appindicator python-idna namcap
+            python-yaml python-gobject gtk3 libayatana-appindicator python-idna namcap
           useradd --create-home builder
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-      - name: Build and inspect PKGBUILD
+      - name: Stage temporary PKGBUILD with shared source
         run: |
-          su builder -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --syncdeps --noconfirm"
-          namcap packaging/arch/*.pkg.tar.*
+          build_dir=$(mktemp -d "$GITHUB_WORKSPACE/build-arch.XXXXXX")
+          cp packaging/arch/PKGBUILD "$build_dir/PKGBUILD"
+          cp "dist/warp-control-$VERSION.tar.gz" "$build_dir/warp-control-$VERSION.tar.gz"
+          source_sha256=$(sha256sum "$build_dir/warp-control-$VERSION.tar.gz" | cut -d ' ' -f 1)
+          sed -i \
+            's|^source=.*|source=("$pkgname-$pkgver.tar.gz")|' \
+            "$build_dir/PKGBUILD"
+          sed -i \
+            "s|^sha256sums=.*|sha256sums=('$source_sha256')|" \
+            "$build_dir/PKGBUILD"
+          chown -R builder:builder "$build_dir"
+          echo "BUILD_DIR=$build_dir" >> "$GITHUB_ENV"
+      - name: Build and inspect Arch package
+        run: |
+          su builder -c "cd '$BUILD_DIR' && makepkg --noconfirm"
+          namcap "$BUILD_DIR"/warp-control-*.pkg.tar.*
       - uses: actions/upload-artifact@v4
         with:
           name: arch
-          path: packaging/arch/*.pkg.tar.*
+          path: build-arch.*/warp-control-*.pkg.tar.*
+          if-no-files-found: error
+
+  arch-install:
+    needs: arch
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch
+          path: package
+      - name: Install and smoke-test Arch package
+        run: |
+          pacman -Syu --noconfirm
+          pacman -U --noconfirm package/warp-control-*.pkg.tar.*
+          /usr/bin/warp-control --smoke-test

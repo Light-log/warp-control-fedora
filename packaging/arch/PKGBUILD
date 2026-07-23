@@ -20,11 +20,14 @@ makedepends=(
   'python-setuptools'
   'python-wheel'
 )
-checkdepends=('python-pytest')
+checkdepends=(
+  'python-pytest'
+  'python-yaml'
+)
 
 # Arch users provide warp-cli separately; this package never installs WARP itself.
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('63eaa0a9c51a1e13fdadc27936b4d1ff2ef6278e2dca47f1b2650b1e600ef900')
+sha256sums=('cba2285b7051016b24ea2e7169a54162c39f891f3069223507522804f5a7f58e')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -33,7 +36,8 @@ build() {
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
-  python -m pytest -m 'not ui'
+  python -m pytest -m 'not ui' \
+    tests/test_*.py tests/installers tests/services tests/ui
 }
 
 package() {

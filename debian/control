@@ -10,6 +10,7 @@ Build-Depends:
  python3-setuptools,
  python3-wheel,
  python3-pytest,
+ python3-yaml,
  python3-idna,
  python3-gi,
  gir1.2-gtk-3.0,

@@ -19,7 +19,7 @@ jobs:
             gir1.2-ayatanaappindicator3-0.1 desktop-file-utils appstream
           python3 -m venv --system-site-packages .venv
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install -e . pytest ruff build idna
+          .venv/bin/pip install -e . pytest pyyaml ruff build idna
       - name: Lint
         run: .venv/bin/python -m ruff check .
       - name: Test
@@ -28,7 +28,7 @@ jobs:
         run: xvfb-run -a .venv/bin/python -m warp_control --smoke-test
       - name: Validate desktop metadata
         run: |
-          desktop-file-validate data/com.robler.warpcontrol.desktop
-          appstreamcli validate --no-net data/com.robler.warpcontrol.metainfo.xml
+          desktop-file-validate data/com.devruby.warpcontrol.desktop
+          appstreamcli validate --no-net data/com.devruby.warpcontrol.metainfo.xml
       - name: Build wheel
         run: .venv/bin/python -m build --wheel

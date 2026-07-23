@@ -2,7 +2,9 @@
 
 export PYBUILD_NAME=warp-control
 export PYBUILD_SYSTEM=pyproject
-export PYBUILD_TEST_ARGS=-m "not ui"
-
 %:
 	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_test:
+	PYTHONPATH=src python3 -m pytest -m "not ui" \
+		tests/test_*.py tests/installers tests/services tests/ui
