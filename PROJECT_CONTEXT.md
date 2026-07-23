@@ -36,4 +36,8 @@ Decisiones principales:
   changelog, seis capturas GTK reales y CI independiente de calidad/RPM/DEB/Arch.
 - Verificación actual: 385 pruebas aprobadas, 1 omitida (sin pantalla), Ruff
   limpio, scripts/metadata validados y wheel con SVG empaquetados validado.
-- Siguiente tarea: Task 14, cierre de release y comprobación final de artefactos.
+- Task 14 terminado: suite completa, Ruff, smoke test, Bash, metadatos de
+  escritorio/AppStream y RPM efímero comprobados. El RPM se generó desde el
+  tarball limpio de `main` y contiene launcher, assets, PolicyKit y helpers.
+- Pendiente externo: publicar `main` y, si se desea, adjuntar los artefactos de
+  release; no hay cambios locales sin confirmar previstos.
