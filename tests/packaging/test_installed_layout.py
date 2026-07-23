@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,16 @@ def _clean_checkout(destination: Path) -> Path:
         target = checkout / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, target, follow_symlinks=False)
+    for relative in (
+        "packaging/release.env",
+        "scripts/update-release-metadata.py",
+        "tests/packaging/test_release_metadata.py",
+    ):
+        source = ROOT / relative
+        if source.exists():
+            target = checkout / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
     subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
     subprocess.run(
         ["git", "-c", "user.name=Tests", "-c", "user.email=tests@example.invalid", "add", "."],
@@ -144,15 +155,39 @@ def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
     env = {**os.environ, "SOURCE_DATE_EPOCH": "1700000000"}
     (checkout / "untracked-secret.txt").write_text("not for release", encoding="utf-8")
 
-    for output in (first, second):
-        subprocess.run(
-            ["bash", "scripts/build-source-tarball.sh", str(output)],
-            cwd=checkout,
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(first)],
+        cwd=checkout,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with (checkout / "packaging/arch/PKGBUILD").open("a", encoding="utf-8") as pkgbuild:
+        pkgbuild.write("\n# Release checksum is intentionally outside its source archive.\n")
+    subprocess.run(["git", "add", "packaging/arch/PKGBUILD"], cwd=checkout, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Tests",
+            "-c",
+            "user.email=tests@example.invalid",
+            "commit",
+            "-qm",
+            "update checksum",
+        ],
+        cwd=checkout,
+        check=True,
+    )
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(second)],
+        cwd=checkout,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(
         second.read_bytes()
@@ -165,6 +200,7 @@ def test_source_tarball_is_reproducible_and_sanitized(tmp_path: Path) -> None:
     assert names == sorted(names)
     assert "warp-control-2.0.0/pyproject.toml" in names
     assert "warp-control-2.0.0/packaging/rpm/warp-control.spec" in names
+    assert "warp-control-2.0.0/packaging/arch/PKGBUILD" not in names
     assert "warp-control-2.0.0/untracked-secret.txt" not in names
     assert all(member.uid == member.gid == 0 for member in members)
     assert all(member.mtime == 1700000000 for member in members)
@@ -189,8 +225,106 @@ def test_source_tarball_refuses_dirty_tracked_content(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert "cambios sin confirmar" in result.stderr.lower()
+    assert "uncommitted changes" in result.stderr.lower()
     assert not output.exists()
+
+
+def test_arch_checksum_matches_default_epoch_clean_source(tmp_path: Path) -> None:
+    checkout = _clean_checkout(tmp_path)
+    output = checkout / "dist/warp-control-2.0.0.tar.gz"
+
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(output)],
+        cwd=checkout,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    pkgbuild = (checkout / "packaging/arch/PKGBUILD").read_text(encoding="utf-8")
+    expected = re.search(r"^sha256sums=\('([0-9a-f]{64})'\)$", pkgbuild, re.MULTILINE)
+    assert expected is not None
+    assert hashlib.sha256(output.read_bytes()).hexdigest() == expected.group(1)
+
+
+def test_source_tarball_uses_git_modes_when_filemode_is_ignored(tmp_path: Path) -> None:
+    checkout = _clean_checkout(tmp_path)
+    first = tmp_path / "first.tar.gz"
+    second = tmp_path / "second.tar.gz"
+    environment = {**os.environ, "SOURCE_DATE_EPOCH": "1700000000"}
+
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(first)],
+        cwd=checkout,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    pyproject = checkout / "pyproject.toml"
+    os.chmod(pyproject, 0o600)
+    subprocess.run(["git", "config", "core.fileMode", "false"], cwd=checkout, check=True)
+    subprocess.run(["git", "diff", "--quiet"], cwd=checkout, check=True)
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(second)],
+        cwd=checkout,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert hashlib.sha256(first.read_bytes()).digest() == hashlib.sha256(
+        second.read_bytes()
+    ).digest()
+
+
+def test_source_tarball_removes_temporary_source_tree_after_success(tmp_path: Path) -> None:
+    checkout = _clean_checkout(tmp_path)
+    output = tmp_path / "output" / "warp-control-2.0.0.tar.gz"
+
+    subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(output)],
+        cwd=checkout,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert output.exists()
+    assert not list(output.parent.glob(".warp-control-source-tree.*"))
+
+
+def test_source_tarball_cleans_archive_if_source_tree_creation_fails(tmp_path: Path) -> None:
+    checkout = _clean_checkout(tmp_path)
+    output = tmp_path / "output" / "warp-control-2.0.0.tar.gz"
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    real_mktemp = shutil.which("mktemp")
+    assert real_mktemp is not None
+    shim = tools / "mktemp"
+    shim.write_text(
+        "#!/usr/bin/bash\n"
+        "if [[ $1 == -d ]]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        f'exec "{real_mktemp}" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(shim, 0o755)
+    environment = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
+
+    result = subprocess.run(
+        ["bash", "scripts/build-source-tarball.sh", str(output)],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert not output.exists()
+    assert not list(output.parent.glob(".warp-control-source.*.tar.gz"))
 
 
 def test_source_manifest_carries_native_packaging_assets() -> None:

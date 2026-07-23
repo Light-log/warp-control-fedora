@@ -8,6 +8,7 @@ ROOT = Path(__file__).parents[2]
 CONTROL = ROOT / "debian/control"
 INSTALL = ROOT / "debian/warp-control.install"
 PKGBUILD = ROOT / "packaging/arch/PKGBUILD"
+RELEASE_ENV = ROOT / "packaging/release.env"
 
 
 def _paragraphs(text: str) -> list[dict[str, str]]:
@@ -113,23 +114,31 @@ def test_arch_package_is_application_only_and_architecture_independent() -> None
     assert "polkit-1" not in pkgbuild
 
 
-def test_arch_source_is_a_pinned_https_git_checkout() -> None:
+def test_arch_source_is_a_tarball_release() -> None:
     pkgbuild = PKGBUILD.read_text(encoding="utf-8")
     sources = _shell_array(pkgbuild, "source")
     checksums = _shell_array(pkgbuild, "sha256sums")
     makedepends = _shell_array(pkgbuild, "makedepends")
 
-    commit = "e1b0ef24a367de0c1eea33e850c10d1c5cf02e55"
-    assert f"source_commit='{commit}'" in pkgbuild
-    assert sources == {
-        "$pkgname::git+https://github.com/Light-log/warp-control-fedora.git#commit=$source_commit"
-    }
-    assert re.fullmatch(r"[0-9a-f]{40}", commit)
-    assert "git" in makedepends
+    assert "source_commit=" not in pkgbuild
+    assert "git+" not in pkgbuild
+    assert len(sources) == 1
+    source = next(iter(sources))
+    assert "releases/download/v" in source
+    assert "$pkgname-$pkgver.tar.gz" in source
     assert len(checksums) == 1
-    assert checksums == {"SKIP"}
-    assert "$pkgname-$pkgver.tar.gz" not in pkgbuild
-    assert 'cd "$srcdir/$pkgname"' in pkgbuild
+    checksum = next(iter(checksums))
+    assert re.fullmatch(r"[a-f0-9]{64}", checksum), f"Expected lowercase 64-char sha256, got {checksum}"
+    assert "SKIP" not in checksums
+    assert "git" not in makedepends
+    assert 'cd "$srcdir/$pkgname-$pkgver"' in pkgbuild or 'cd "$srcdir/warp-control-$pkgver"' in pkgbuild
+
+
+def test_release_contract_has_one_valid_version_and_epoch() -> None:
+    assert RELEASE_ENV.read_text(encoding="utf-8").splitlines() == [
+        "VERSION=2.0.0",
+        "SOURCE_DATE_EPOCH=1784678400",
+    ]
 
 
 def test_native_packages_never_depend_on_or_install_cloudflare_warp() -> None:

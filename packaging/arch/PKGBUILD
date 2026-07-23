@@ -3,7 +3,6 @@
 pkgname=warp-control
 pkgver=2.0.0
 pkgrel=1
-source_commit='e1b0ef24a367de0c1eea33e850c10d1c5cf02e55'
 pkgdesc='GTK desktop control panel for Cloudflare WARP (experimental on Arch)'
 arch=('any')
 url='https://github.com/Light-log/warp-control-fedora'
@@ -16,7 +15,6 @@ depends=(
   'python-idna'
 )
 makedepends=(
-  'git'
   'python-build'
   'python-installer'
   'python-setuptools'
@@ -24,24 +22,22 @@ makedepends=(
 )
 checkdepends=('python-pytest')
 
-# The VCS checksum is skipped only because the source is pinned to the complete,
-# immutable commit above. Arch users must obtain warp-cli separately from a
-# community source; no privileged installation helper is bundled.
-source=("$pkgname::git+https://github.com/Light-log/warp-control-fedora.git#commit=$source_commit")
-sha256sums=('SKIP')
+# Arch users provide warp-cli separately; this package never installs WARP itself.
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('c8bfb836808b2109eea690667fd0deb7ada04491bc6ff63dda3480f79ecbd57e')
 
 build() {
-  cd "$srcdir/$pkgname"
+  cd "$srcdir/$pkgname-$pkgver"
   python -m build --wheel --no-isolation
 }
 
 check() {
-  cd "$srcdir/$pkgname"
+  cd "$srcdir/$pkgname-$pkgver"
   python -m pytest -m 'not ui'
 }
 
 package() {
-  cd "$srcdir/$pkgname"
+  cd "$srcdir/$pkgname-$pkgver"
   python -m installer --destdir="$pkgdir" dist/*.whl
 
   install -Dm644 data/com.robler.warpcontrol.desktop \
