@@ -15,6 +15,7 @@ versionado semántico.
 - Flujo de instalación explícitamente confirmado mediante PolicyKit para RPM/APT.
 - Empaquetado RPM, Debian y PKGBUILD experimental para Arch.
 - CI de calidad, artefactos y documentación de arquitectura/compatibilidad.
+- Publicación por etiquetas de releases Linux completos con manifiesto SHA-256.
 
 ### Security
 

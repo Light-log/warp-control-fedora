@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  packages:
+    uses: ./.github/workflows/packages.yml
+
+  publish:
+    needs: packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download same-run package artifacts in isolation
+        uses: actions/download-artifact@v4
+        with:
+          path: downloads
+          merge-multiple: false
+      - name: Validate and flatten release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_directories=(
+            source-tarball
+            rpm-fedora43 rpm-fedora44 rpm-el9 rpm-el10
+            deb-ubuntu2204 deb-ubuntu2404 deb-ubuntu2604 deb-debian12 deb-debian13
+            arch
+            appimage-x86_64 appimage-aarch64
+          )
+          [[ ! -L downloads && -d downloads ]]
+          if find downloads -mindepth 1 -type l -print -quit | grep -q .; then
+            echo "Downloaded artifacts must not contain symlinks" >&2
+            exit 1
+          fi
+          if find downloads -mindepth 1 ! -type d ! -type f ! -type l -print -quit | grep -q .; then
+            echo "Downloaded artifacts must contain only regular files" >&2
+            exit 1
+          fi
+          for directory in "${expected_directories[@]}"; do
+            [[ -d "downloads/$directory" && ! -L "downloads/$directory" ]] || {
+              echo "Missing isolated artifact directory: $directory" >&2
+              exit 1
+            }
+          done
+          mapfile -t actual_directories < <(
+            find downloads -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort
+          )
+          mapfile -t sorted_expected < <(printf '%s\n' "${expected_directories[@]}" | LC_ALL=C sort)
+          [[ ${actual_directories[*]} == "${sorted_expected[*]}" ]] || {
+            echo "Unexpected isolated artifact directory" >&2
+            exit 1
+          }
+
+          mkdir -m 0755 release
+          copy_one() {
+            local directory=$1 pattern=$2 destination_name=${3-}
+            local -a matches=()
+            mapfile -d '' -t matches < <(
+              find "downloads/$directory" -mindepth 1 -maxdepth 1 -type f \
+                -name "$pattern" -print0
+            )
+            [[ ${#matches[@]} -eq 1 ]] || {
+              echo "Expected exactly one $pattern in downloads/$directory" >&2
+              exit 1
+            }
+            [[ $(find "downloads/$directory" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ]] || {
+              echo "Unexpected content in downloads/$directory" >&2
+              exit 1
+            }
+            if [[ -z $destination_name ]]; then
+              destination_name=${matches[0]##*/}
+            fi
+            [[ ! -e "release/$destination_name" && ! -L "release/$destination_name" ]] || {
+              echo "refusing to overwrite release/$destination_name" >&2
+              exit 1
+            }
+            install -m 0644 -- "${matches[0]}" "release/$destination_name"
+          }
+
+          copy_one source-tarball 'warp-control-*.tar.gz'
+          copy_one rpm-fedora43 'warp-control-*.fc43.noarch.rpm'
+          copy_one rpm-fedora44 'warp-control-*.fc44.noarch.rpm'
+          copy_one rpm-el9 'warp-control-*.el9.noarch.rpm'
+          copy_one rpm-el10 'warp-control-*.el10.noarch.rpm'
+          copy_one arch 'warp-control-*-any.pkg.tar.zst'
+          copy_one appimage-x86_64 'WARP-Control-*-x86_64.AppImage'
+          copy_one appimage-aarch64 'WARP-Control-*-aarch64.AppImage'
+          for target in ubuntu2204 ubuntu2404 ubuntu2604 debian12 debian13; do
+            source=(downloads/deb-$target/warp-control_*_all.deb)
+            [[ ${#source[@]} -eq 1 && -f ${source[0]} && ! -L ${source[0]} ]] || {
+              echo "Expected one native DEB for $target" >&2
+              exit 1
+            }
+            basename=${source[0]##*/}
+            destination=${basename%_all.deb}_all-$target.deb
+            copy_one "deb-$target" 'warp-control_*_all.deb' "$destination"
+          done
+
+          scripts/verify-release.sh "$GITHUB_REF_NAME" release
+          [[ -f release/SHA256SUMS && ! -L release/SHA256SUMS ]]
+      - name: Publish verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag --title "WARP Control $GITHUB_REF_NAME" --generate-notes
