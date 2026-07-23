@@ -8,6 +8,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).parents[2]
 APPIMAGE_DIR = ROOT / "packaging/appimage"
@@ -19,6 +21,7 @@ APPIMAGETOOL_SHA256 = APPIMAGE_DIR / "appimagetool.sha256"
 RUNTIME_SHA256 = APPIMAGE_DIR / "runtime.sha256"
 BUILDER = ROOT / "scripts/build-appimage.sh"
 TREE_VERIFIER = APPIMAGE_DIR / "verify_tree.py"
+PACKAGES_WORKFLOW = ROOT / ".github/workflows/packages.yml"
 
 FORBIDDEN_TOKENS = (
     "usr/libexec/warp-control",
@@ -63,6 +66,49 @@ def _run_tree_verifier(
         capture_output=True,
         check=False,
     )
+
+
+def _package_jobs() -> dict:
+    workflow = yaml.safe_load(_read(PACKAGES_WORKFLOW))
+    return workflow["jobs"]
+
+
+# --- native-architecture CI ------------------------------------------
+
+
+def test_appimage_ci_uses_both_native_github_runner_architectures() -> None:
+    job = _package_jobs()["appimage"]
+
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"]["include"] == [
+        {"arch": "x86_64", "runner": "ubuntu-22.04"},
+        {"arch": "aarch64", "runner": "ubuntu-22.04-arm"},
+    ]
+
+
+def test_appimage_ci_downloads_only_official_pinned_inputs() -> None:
+    job_text = yaml.safe_dump(_package_jobs()["appimage"], sort_keys=False)
+
+    assert "https://github.com/AppImage/appimagetool/releases/download/continuous/" in job_text
+    assert "https://github.com/AppImage/type2-runtime/releases/download/continuous/" in job_text
+    assert "packaging/appimage/appimagetool.sha256" in job_text
+    assert "packaging/appimage/runtime.sha256" in job_text
+    assert "sha256sum" in job_text
+    assert job_text.index("sha256sum") < job_text.index("build-appimage.sh")
+
+
+def test_appimage_ci_builds_inspects_smokes_and_uploads_each_architecture() -> None:
+    job_text = yaml.safe_dump(_package_jobs()["appimage"], sort_keys=False)
+
+    assert "scripts/build-appimage.sh" in job_text
+    assert "--appimage-extract" in job_text
+    assert "xvfb-run" in job_text
+    assert "--smoke-test" in job_text
+    for token in FORBIDDEN_TOKENS:
+        assert token in job_text
+    assert "name: appimage-${{ matrix.arch }}" in job_text
+    assert "dist/WARP-Control-*-${{ matrix.arch }}.AppImage" in job_text
 
 
 # --- entrypoint -------------------------------------------------------

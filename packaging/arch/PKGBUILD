@@ -27,7 +27,7 @@ checkdepends=(
 
 # Arch users provide warp-cli separately; this package never installs WARP itself.
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('cba2285b7051016b24ea2e7169a54162c39f891f3069223507522804f5a7f58e')
+sha256sums=('0a2878afde5eb3398c0a975c08636b3321b0ca815125600db40e29f86b1033bc')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"
