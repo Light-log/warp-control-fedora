@@ -24,7 +24,7 @@ checkdepends=('python-pytest')
 
 # Arch users provide warp-cli separately; this package never installs WARP itself.
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('2c03bb2ab5cc5262d743c7d7c5c0c97054c807d0a5b698a4b63d20fd2e6c42c0')
+sha256sums=('ee6fb19353c448f4e6a7a3fec0bbe2f9aec664d216c8e04d77fd7758a42fe7b4')
 
 build() {
   cd "$srcdir/$pkgname-$pkgver"

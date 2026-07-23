@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WARP Control
+Comment=Control Cloudflare WARP from the desktop
+Exec=warp-control
+Icon=com.robler.warpcontrol
+Terminal=false
+Categories=Network;Utility;
+StartupNotify=true

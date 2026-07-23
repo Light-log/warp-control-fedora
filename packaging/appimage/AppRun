@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ -z "${APPDIR:-}" ]; then
+    APPDIR=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
+fi
+
+internal="$APPDIR/usr/bin/_internal"
+export LD_LIBRARY_PATH="$internal"
+export GI_TYPELIB_PATH="$internal/gi_typelibs"
+export XDG_DATA_DIRS="$internal/share:$APPDIR/usr/share"
+
+if [ -d "$internal/share/glib-2.0/schemas" ]; then
+    export GSETTINGS_SCHEMA_DIR="$internal/share/glib-2.0/schemas"
+fi
+if [ -d "$internal/gdk-pixbuf/loaders" ]; then
+    export GDK_PIXBUF_MODULEDIR="$internal/gdk-pixbuf/loaders"
+fi
+if [ -f "$internal/gdk-pixbuf/loaders.cache" ]; then
+    export GDK_PIXBUF_MODULE_FILE="$internal/gdk-pixbuf/loaders.cache"
+fi
+
+export WARP_CONTROL_EXECUTABLE="${APPIMAGE:-$APPDIR/AppRun}"
+export WARP_CONTROL_DESKTOP_FILE="$APPDIR/usr/share/applications/com.robler.warpcontrol.desktop"
+
+exec "$APPDIR/usr/bin/warp-control" "$@"

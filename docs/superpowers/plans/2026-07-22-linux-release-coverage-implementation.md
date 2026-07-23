@@ -218,7 +218,7 @@ exec "$APPDIR/usr/bin/warp-control" "$@"
 
 - [ ] **Step 5: Implement the builder**
 
-`build-appimage.sh --arch x86_64|aarch64 --appimagetool PATH --output-dir PATH` validates native architecture and a regular executable tool, creates an inode-validated private AppDir, runs PyInstaller, installs fixed-mode metadata/assets, invokes appimagetool, extracts the result, scans its allowlist and runs `--appimage-extract-and-run --smoke-test`. It never downloads tools.
+`build-appimage.sh --arch x86_64|aarch64 --appimagetool PATH --runtime-file PATH --output-dir PATH` validates the native architecture plus pinned regular tool/runtime inputs, creates an inode-validated private AppDir, runs PyInstaller, installs fixed-mode metadata/assets, invokes appimagetool with the explicit Type 2 runtime, extracts the result, scans its allowlist and runs `--appimage-extract-and-run --smoke-test`. It never downloads build inputs.
 
 - [ ] **Step 6: Verify host build and commit**
 
@@ -227,7 +227,7 @@ Run:
 ```bash
 .venv/bin/pytest tests/packaging/test_appimage.py -q
 bash -n scripts/build-appimage.sh packaging/appimage/AppRun
-scripts/build-appimage.sh --arch x86_64 --appimagetool "$PWD/.tools/appimagetool-x86_64.AppImage" --output-dir "$PWD/dist"
+scripts/build-appimage.sh --arch x86_64 --appimagetool "$PWD/.tools/appimagetool-x86_64.AppImage" --runtime-file "$PWD/.tools/runtime-x86_64" --output-dir "$PWD/dist"
 dist/WARP-Control-2.0.0-x86_64.AppImage --appimage-extract-and-run --smoke-test
 ```
 
