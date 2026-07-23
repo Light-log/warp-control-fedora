@@ -11,10 +11,11 @@ usage() {
     cat <<EOF
 Uso: $PROGRAM [--dry-run] [--yes] [--package RUTA]
 
-Instala un paquete nativo ya construido de WARP Control. Este bootstrap no
-añade repositorios de terceros ni instala Cloudflare WARP silenciosamente.
+Instala un paquete nativo o integra un AppImage de WARP Control. Este
+bootstrap no añade repositorios de terceros ni instala Cloudflare WARP
+silenciosamente.
 
-  --package RUTA  usa un .rpm, .deb o .pkg.tar.* concreto
+  --package RUTA  usa un .rpm, .deb, .pkg.tar.* o .AppImage concreto
   --dry-run       muestra el plan sin pedir privilegios ni cambiar archivos
   --yes           acepta la instalación del paquete sin preguntar
   --help          muestra esta ayuda
@@ -91,6 +92,256 @@ while (($#)); do
         *) die "Opción desconocida: $1" ;;
     esac
 done
+
+appimage_header_arch() {
+    local image=$1 magic elf_class byte_order machine
+    magic=$(od -An -tx1 -N4 -- "$image" 2>/dev/null | tr -d ' \n')
+    elf_class=$(od -An -tx1 -j4 -N1 -- "$image" 2>/dev/null | tr -d ' \n')
+    byte_order=$(od -An -tx1 -j5 -N1 -- "$image" 2>/dev/null | tr -d ' \n')
+    machine=$(od -An -tx1 -j18 -N2 -- "$image" 2>/dev/null | tr -d ' \n')
+    [[ $magic == 7f454c46 && $elf_class == 02 && $byte_order == 01 ]] || return 1
+    case $machine in
+        3e00) printf 'x86_64\n' ;;
+        b700) printf 'aarch64\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+appimage_cleanup_staging() {
+    local current_id=""
+    [[ ${APPIMAGE_RETAIN_STAGING:-0} == 0 ]] || return 0
+    if [[ -d ${APPIMAGE_STAGING_DIR:-} && ! -L $APPIMAGE_STAGING_DIR ]]; then
+        current_id=$(stat -c '%d:%i:%u' -- "$APPIMAGE_STAGING_DIR" 2>/dev/null || true)
+    fi
+    if [[ $current_id == "${APPIMAGE_STAGING_ID:-invalid}" && ${APPIMAGE_STAGING_DIR:-} == "${TEMP_BASE:-/invalid}"/warp-control-appimage.* ]]; then
+        rm -rf --one-file-system -- "$APPIMAGE_STAGING_DIR"
+    fi
+}
+
+desktop_exec_value() {
+    local value=$1
+    if [[ $value =~ ^[A-Za-z0-9_./:+@%-]+$ ]]; then
+        printf '%s' "$value"
+    else
+        value=${value//\\/\\\\}
+        value=${value//\"/\\\"}
+        value=${value//\`/\\\`}
+        value=${value//\$/\\$}
+        printf '"%s"' "$value"
+    fi
+}
+
+is_managed_appimage_launcher() {
+    local launcher=$1 opt_dir=$2 escaped_opt target_token suffix=' "$@"'
+    local -a lines=()
+    mapfile -t lines < "$launcher"
+    ((${#lines[@]} == 2)) || return 1
+    [[ ${lines[0]} == '#!/usr/bin/env bash' ]] || return 1
+    [[ ${lines[1]} == exec\ *"$suffix" ]] || return 1
+    target_token=${lines[1]#exec }
+    target_token=${target_token%"$suffix"}
+    [[ ${lines[1]} == "exec $target_token$suffix" ]] || return 1
+    printf -v escaped_opt '%q' "$opt_dir/"
+    [[ $target_token == "$escaped_opt"* ]] || return 1
+    target_token=${target_token#"$escaped_opt"}
+    [[ $target_token =~ ^WARP-Control-([0-9][A-Za-z0-9._+-]*|local)-(x86_64|aarch64)\.AppImage$ ]]
+}
+
+install_appimage() {
+    local source=$1 host_arch image_arch install_root image_name
+    local opt_dir bin_dir desktop_dir icon_dir image_target launcher_target desktop_target icon_target
+    local snapshot desktop_source icon_source desktop_exec line exec_count=0
+    local -a desktop_matches=() icon_matches=() targets=() candidates=() backups=() modes=()
+    local index replaced=0 candidate rollback_failed
+    local source_owner source_mode source_permissions
+
+    source=$(lexical_absolute_path "$source")
+    reject_symlink_chain "$source" "El AppImage fuente"
+    [[ ! -L $source && -f $source && -r $source ]] || die "El AppImage no es un archivo regular legible: $source"
+    source_owner=$(stat -c '%u' -- "$source")
+    source_mode=$(stat -c '%a' -- "$source")
+    [[ $source_mode =~ ^[0-7]{3,4}$ ]] || die "No se pudieron validar los permisos del AppImage."
+    source_permissions=$((8#$source_mode))
+    [[ $source_owner == "$EUID" || $source_owner == 0 ]] || die "El AppImage debe pertenecer al usuario actual o a root."
+    (( (source_permissions & 0022) == 0 )) || die "El AppImage permite escritura de grupo o terceros y no es seguro."
+    image_arch=$(appimage_header_arch "$source") || die "El archivo .AppImage no tiene un encabezado ELF64 little-endian compatible."
+    case $(uname -m) in
+        x86_64|amd64) host_arch=x86_64 ;;
+        aarch64|arm64) host_arch=aarch64 ;;
+        *) die "La arquitectura del equipo no admite este AppImage." ;;
+    esac
+    [[ $image_arch == "$host_arch" ]] || die "El AppImage es para $image_arch, pero el equipo es $host_arch."
+
+    install_root=${WARP_CONTROL_INSTALL_ROOT:-$HOME/.local}
+    [[ $install_root == /* ]] || die "WARP_CONTROL_INSTALL_ROOT debe ser una ruta absoluta."
+    install_root=$(lexical_absolute_path "$install_root")
+    [[ $install_root != *$'\n'* && $install_root != *$'\r'* ]] || die "La raíz de instalación no es segura."
+    reject_symlink_chain "$install_root" "La raíz de instalación"
+
+    image_name=${source##*/}
+    if [[ ! $image_name =~ ^WARP-Control-[0-9][A-Za-z0-9._+-]*-${image_arch}\.AppImage$ ]]; then
+        image_name=WARP-Control-local-${image_arch}.AppImage
+    fi
+    opt_dir=$install_root/opt/warp-control
+    bin_dir=$install_root/bin
+    desktop_dir=$install_root/share/applications
+    icon_dir=$install_root/share/icons/hicolor/scalable/apps
+    image_target=$opt_dir/$image_name
+    launcher_target=$bin_dir/warp-control
+    desktop_target=$desktop_dir/com.devruby.warpcontrol.desktop
+    icon_target=$icon_dir/com.devruby.warpcontrol.svg
+
+    if [[ ${XDG_RUNTIME_DIR:-} ]]; then
+        TEMP_BASE=$(lexical_absolute_path "$XDG_RUNTIME_DIR")
+        if [[ ! -d $TEMP_BASE || ! -w $TEMP_BASE ]]; then
+            TEMP_BASE=$(lexical_absolute_path "${TMPDIR:-/tmp}")
+        fi
+    else
+        TEMP_BASE=$(lexical_absolute_path "${TMPDIR:-/tmp}")
+    fi
+    validate_temp_base "$TEMP_BASE"
+    APPIMAGE_STAGING_DIR=$(mktemp -d -- "$TEMP_BASE/warp-control-appimage.XXXXXX")
+    chmod 0700 -- "$APPIMAGE_STAGING_DIR"
+    reject_symlink_chain "$APPIMAGE_STAGING_DIR" "El directorio temporal"
+    APPIMAGE_STAGING_ID=$(stat -c '%d:%i:%u' -- "$APPIMAGE_STAGING_DIR")
+    APPIMAGE_RETAIN_STAGING=0
+    trap appimage_cleanup_staging EXIT
+
+    snapshot=$APPIMAGE_STAGING_DIR/$image_name
+    cp -- "$source" "$snapshot"
+    [[ ! -L $source && -f $snapshot && ! -L $snapshot ]] || die "El AppImage cambió durante la instantánea."
+    chmod 0500 -- "$snapshot"
+    read -r SNAPSHOT_SHA256 _ < <(sha256sum -- "$snapshot")
+
+    printf 'WARP Control — instalación local AppImage\n'
+    printf 'Arquitectura: %s\n' "$image_arch"
+    printf 'AppImage original: %s\n' "$source"
+    printf 'Destino: %s\n' "$image_target"
+    printf 'Lanzador: %s\n' "$launcher_target"
+    printf 'SHA-256: %s\n' "$SNAPSHOT_SHA256"
+    printf 'Acción privilegiada: ninguna\n'
+    if ((DRY_RUN)); then
+        printf '\n[DRY-RUN] No se solicitaron privilegios ni se modificó el sistema.\n'
+        exit 0
+    fi
+
+    if ((!ASSUME_YES)); then
+        [[ -t 0 ]] || die "Se necesita confirmación interactiva; usa --yes si ya revisaste el plan."
+        read -r -p "¿Instalar este AppImage para el usuario actual? [s/N]: " answer
+        [[ $answer == [sS] || $answer == [sS][iI] ]] || {
+            printf 'Instalación cancelada.\n'
+            exit 0
+        }
+    fi
+
+    mkdir "$APPIMAGE_STAGING_DIR/desktop" "$APPIMAGE_STAGING_DIR/icon"
+    (cd -- "$APPIMAGE_STAGING_DIR/desktop" && "$snapshot" --appimage-extract '*.desktop' >/dev/null)
+    (cd -- "$APPIMAGE_STAGING_DIR/icon" && "$snapshot" --appimage-extract 'usr/share/icons/hicolor/scalable/apps/*.svg' >/dev/null)
+    shopt -s nullglob globstar
+    desktop_matches=("$APPIMAGE_STAGING_DIR"/desktop/squashfs-root/*.desktop)
+    icon_matches=("$APPIMAGE_STAGING_DIR"/icon/squashfs-root/usr/share/icons/hicolor/scalable/apps/*.svg)
+    shopt -u nullglob globstar
+    ((${#desktop_matches[@]} == 1)) || die "El AppImage no contiene exactamente un archivo desktop esperado."
+    ((${#icon_matches[@]} == 1)) || die "El AppImage no contiene exactamente un icono SVG esperado."
+    desktop_source=${desktop_matches[0]}
+    icon_source=${icon_matches[0]}
+    [[ -f $desktop_source && ! -L $desktop_source ]] || die "El archivo desktop extraído no es regular."
+    [[ -f $icon_source && ! -L $icon_source ]] || die "El icono extraído no es regular."
+
+    desktop_exec=$(desktop_exec_value "$launcher_target")
+    while IFS= read -r line || [[ -n $line ]]; do
+        if [[ $line == Exec=* ]]; then
+            printf 'Exec=%s\n' "$desktop_exec"
+            exec_count=$((exec_count + 1))
+        else
+            printf '%s\n' "$line"
+        fi
+    done < "$desktop_source" > "$APPIMAGE_STAGING_DIR/com.devruby.warpcontrol.desktop"
+    ((exec_count == 1)) || die "El archivo desktop debe contener exactamente una línea Exec."
+    cp -- "$icon_source" "$APPIMAGE_STAGING_DIR/com.devruby.warpcontrol.svg"
+    {
+        printf '#!/usr/bin/env bash\nexec '
+        printf '%q' "$image_target"
+        printf ' "$@"\n'
+    } > "$APPIMAGE_STAGING_DIR/warp-control"
+    chmod 0755 -- "$APPIMAGE_STAGING_DIR/warp-control"
+
+    if [[ -e $launcher_target || -L $launcher_target ]]; then
+        reject_symlink_chain "$launcher_target" "El lanzador existente"
+        [[ -f $launcher_target && ! -L $launcher_target ]] || die "El lanzador existente no es un archivo regular seguro."
+        is_managed_appimage_launcher "$launcher_target" "$opt_dir" || die "El lanzador existente pertenece a otra instalación y no se reemplazará."
+    fi
+
+    mkdir -p -- "$opt_dir" "$bin_dir" "$desktop_dir" "$icon_dir"
+    for candidate in "$opt_dir" "$bin_dir" "$desktop_dir" "$icon_dir"; do
+        reject_symlink_chain "$candidate" "El directorio de instalación"
+        [[ -d $candidate && ! -L $candidate ]] || die "El destino de instalación no es un directorio regular."
+    done
+
+    targets=("$image_target" "$launcher_target" "$desktop_target" "$icon_target")
+    candidates=("$opt_dir/.warp-control.image.$$" "$bin_dir/.warp-control.launcher.$$" "$desktop_dir/.warp-control.desktop.$$" "$icon_dir/.warp-control.icon.$$")
+    backups=("$APPIMAGE_STAGING_DIR/backup-image" "$APPIMAGE_STAGING_DIR/backup-launcher" "$APPIMAGE_STAGING_DIR/backup-desktop" "$APPIMAGE_STAGING_DIR/backup-icon")
+    modes=(0755 0755 0644 0644)
+    for index in "${!targets[@]}"; do
+        reject_symlink_chain "${targets[$index]}" "El destino de instalación"
+        [[ ! -e ${candidates[$index]} && ! -L ${candidates[$index]} ]] || die "Existe un archivo temporal inesperado en el destino."
+        if [[ -e ${targets[$index]} || -L ${targets[$index]} ]]; then
+            [[ -f ${targets[$index]} && ! -L ${targets[$index]} ]] || die "Un destino existente no es un archivo regular seguro."
+            cp -p -- "${targets[$index]}" "${backups[$index]}"
+        fi
+    done
+    cp -- "$snapshot" "${candidates[0]}"
+    cp -- "$APPIMAGE_STAGING_DIR/warp-control" "${candidates[1]}"
+    cp -- "$APPIMAGE_STAGING_DIR/com.devruby.warpcontrol.desktop" "${candidates[2]}"
+    cp -- "$APPIMAGE_STAGING_DIR/com.devruby.warpcontrol.svg" "${candidates[3]}"
+    for index in "${!candidates[@]}"; do
+        chmod "${modes[$index]}" -- "${candidates[$index]}"
+    done
+
+    for index in "${!targets[@]}"; do
+        if ! mv -f -- "${candidates[$index]}" "${targets[$index]}"; then
+            rollback_failed=0
+            for ((replaced = index - 1; replaced >= 0; replaced--)); do
+                if [[ -f ${backups[$replaced]} ]]; then
+                    if ! cp -p -- "${backups[$replaced]}" "${candidates[$replaced]}"; then
+                        rollback_failed=1
+                        APPIMAGE_RETAIN_STAGING=1
+                    elif ! mv -f -- "${candidates[$replaced]}" "${targets[$replaced]}"; then
+                        rollback_failed=1
+                        APPIMAGE_RETAIN_STAGING=1
+                    fi
+                else
+                    if ! rm -f -- "${targets[$replaced]}"; then
+                        rollback_failed=1
+                        APPIMAGE_RETAIN_STAGING=1
+                    fi
+                fi
+            done
+            for candidate in "${candidates[@]}"; do
+                if [[ -f $candidate && ! -L $candidate ]]; then
+                    if ! rm -f -- "$candidate"; then
+                        rollback_failed=1
+                        APPIMAGE_RETAIN_STAGING=1
+                    fi
+                fi
+            done
+            if ((rollback_failed)); then
+                die "La instalación falló y la restauración quedó incompleta. Copias de recuperación: $APPIMAGE_STAGING_DIR"
+            fi
+            die "No se pudo completar la sustitución atómica; se restauró la instalación anterior."
+        fi
+    done
+
+    printf '\n[OK] WARP Control fue instalado localmente sin privilegios.\n'
+    exit 0
+}
+
+# Un AppImage explícito se identifica y valida antes de leer la familia de la
+# distribución. Así también funciona en distribuciones no incluidas en la
+# matriz de paquetes nativos.
+if [[ -n $PACKAGE_PATH && $PACKAGE_PATH == *.AppImage ]]; then
+    install_appimage "$PACKAGE_PATH"
+fi
 
 if [[ ${WARP_CONTROL_OS_RELEASE+x} ]]; then
     [[ -f $OS_RELEASE && ! -L $OS_RELEASE ]] || die "os-release debe ser un archivo regular, no un enlace simbólico."
