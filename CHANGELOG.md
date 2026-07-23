@@ -14,6 +14,11 @@ versionado semántico.
 - Configuración atómica, validación IDNA y control de concurrencia de WARP.
 - Flujo de instalación explícitamente confirmado mediante PolicyKit para RPM/APT.
 - Empaquetado RPM, Debian y PKGBUILD experimental para Arch.
+- AppImages portátiles para Linux `x86_64` y `aarch64`, con instalación local
+  transaccional y sin privilegios.
+- Matrices de CI para Fedora 43/44, Enterprise Linux 9/10, Ubuntu
+  22.04/24.04/26.04, Debian 12/13 y Arch, con instalación limpia de cada
+  artefacto nativo.
 - CI de calidad, artefactos y documentación de arquitectura/compatibilidad.
 - Publicación por etiquetas de releases Linux completos con manifiesto SHA-256.
 

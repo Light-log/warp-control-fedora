@@ -1,43 +1,52 @@
 # Contexto del proyecto
 
-WARP Control es una interfaz GTK para `warp-cli`. El repositorio actual contiene un único instalador Bash que genera la aplicación Python. El diseño aprobado el 2026-07-16 reestructura el proyecto como paquete Python real, añade una ventana única con panel compacto y tres pestañas, y produce RPM, DEB y PKGBUILD.
+WARP Control es una interfaz GTK para `warp-cli`, organizada como un paquete
+Python real bajo `src/warp_control`. Ofrece una ventana única con panel compacto
+y pestañas de Exclusiones, Apariencia y Ajustes, además de integración con la
+bandeja. La especificación funcional original está en
+`docs/superpowers/specs/2026-07-16-multidistro-packaging-and-ui-design.md` y la
+cobertura de releases Linux en
+`docs/superpowers/specs/2026-07-22-linux-release-coverage-design.md`.
 
-La especificación vigente es `docs/superpowers/specs/2026-07-16-multidistro-packaging-and-ui-design.md`.
+## Decisiones vigentes
 
-Decisiones principales:
+- Solo Linux: no se publican artefactos para Windows ni macOS.
+- WARP Control y Cloudflare WARP tienen matrices diferentes. El AppImage hace
+  portátil el panel, pero no convierte una distribución en oficialmente
+  soportada por Cloudflare.
+- La instalación de WARP requiere confirmación y PolicyKit; ningún scriptlet de
+  paquete agrega repositorios de terceros.
+- El PKGBUILD usa el tarball versionado y su SHA-256; Arch usa una fuente
+  comunitaria para WARP y WARP Control no automatiza AUR.
+- El ID de aplicación canónico es `com.devruby.warpcontrol`.
+- Los artefactos de release se construyen desde una fuente reproducible y la
+  publicación por etiqueta verifica nombres, versiones y SHA-256.
 
-- RPM como artefacto central de portafolio; sin COPR por ahora.
-- DEB para Ubuntu/Debian y PKGBUILD experimental para Arch.
-- Instalación de Cloudflare solo tras confirmación y PolicyKit; nunca desde `%post`.
-- Arch no instala AUR automáticamente.
-- Una sola ventana GTK con panel compacto y vista de configuración.
-- Colores de estado para el icono; color de acento para acciones y navegación.
-- Cabecera integrada con el tema y pestañas de tamaño fijo.
+## Cobertura implementada
 
-## Estado de implementación (2026-07-17)
+- La matriz RPM construye e instala de forma aislada en Fedora 43/44 y Rocky
+  Linux 9/10: `warp-control-2.0.0-1.fc43.noarch.rpm`,
+  `warp-control-2.0.0-1.fc44.noarch.rpm`,
+  `warp-control-2.0.0-1.el9.noarch.rpm` y
+  `warp-control-2.0.0-1.el10.noarch.rpm`.
+- La matriz DEB construye e instala de forma aislada en Ubuntu
+  22.04/24.04/26.04 y Debian 12/13, con sufijos `all-ubuntu2204.deb`, `all-ubuntu2404.deb`,
+  `all-ubuntu2604.deb`, `all-debian12.deb` y `all-debian13.deb`.
+- Arch: `warp-control-2.0.0-1-any.pkg.tar.zst`.
+- AppImage nativo en ambas arquitecturas:
+  `WARP-Control-2.0.0-x86_64.AppImage` y
+  `WARP-Control-2.0.0-aarch64.AppImage`; incluye Python, GTK y PyGObject, pero
+  mantiene `warp-cli` y `warp-svc` como componentes externos.
+- Fuente: `warp-control-2.0.0.tar.gz`; manifiesto: `SHA256SUMS`.
 
-- Plan activo: `docs/superpowers/plans/2026-07-16-warp-control-multidistro-implementation.md`.
-- Tasks 1–13 terminadas y aprobadas mediante revisión de especificación y calidad.
-- Paquete Python creado con configuración esquema 2, migración y persistencia atómica.
-- Normalización de dominios usa IDNA 2008/UTS 46, conserva wildcards y rechaza notación IP ambigua.
-- `CommandRunner` ejecuta argv sin shell y devuelve resultados tipados para fallos normales.
-- `WarpService` detecta capacidades de versiones nuevas y heredadas, aplica cambios con rollback seguro y nunca construye shell.
-- Iconos Cloudflare de dos colores y autostart XDG se generan de forma atómica con rutas validadas.
-- La ventana GTK única incluye panel compacto y tabs Exclusiones/Apariencia/Ajustes; conserva modo/protocolo, limpia proveedores CSS y carga SVG empaquetados.
-- StatusNotifierItem adquiere el nombre D-Bus antes de registrarse, abre panel/menú y degrada a AyatanaAppIndicator sin fugas.
-- El controlador serializa mutaciones WARP, descarta snapshots obsoletos, hace rollback de configuración y evita procesos ocultos sin bandeja.
-- Logs rotativos solo guardan metadatos; `--smoke-test` funciona sin pantalla, D-Bus ni `warp-cli`.
-- La detección fail-closed cubre la matriz oficial Cloudflare 2026 para RPM/APT; Arch solo ofrece instrucciones.
-- El helper PolicyKit fija el fingerprint Cloudflare, restringe origen de paquetes, acota procesos/JSONL y suspende polling durante el flujo inicial.
-- El instalador heredado ahora es un wrapper de siete líneas; el bootstrap usa snapshots con SHA-256 y la migración crea backups recuperables.
-- RPM, DEB y PKGBUILD revisados con metadatos nativos; Arch fija una fuente Git a
-  commit completo y se declara experimental.
-- README renovado, documentación de arquitectura/instalación/compatibilidad,
-  changelog, seis capturas GTK reales y CI independiente de calidad/RPM/DEB/Arch.
-- Verificación actual: 385 pruebas aprobadas, 1 omitida (sin pantalla), Ruff
-  limpio, scripts/metadata validados y wheel con SVG empaquetados validado.
-- Task 14 terminado: suite completa, Ruff, smoke test, Bash, metadatos de
-  escritorio/AppStream y RPM efímero comprobados. El RPM se generó desde el
-  tarball limpio de `main` y contiene launcher, assets, PolicyKit y helpers.
-- Pendiente externo: publicar `main` y, si se desea, adjuntar los artefactos de
-  release; no hay cambios locales sin confirmar previstos.
+## Estado local
+
+Las tareas de fuente reproducible, rutas portátiles, construcción AppImage,
+identidad de la aplicación, integración local sin privilegios, matrices de
+paquetes y publicación por etiquetas están implementadas en `main`. Las seis
+capturas GTK reales permanecen en `docs/screenshots`. Solo quedan operaciones
+remotas, enumeradas en `NEXT_STEPS.md`.
+
+La construcción e instalación se reprodujeron localmente en contenedores
+limpios para Ubuntu 22.04 y Rocky Linux 9.8; las demás celdas están definidas y
+se comprobarán en GitHub Actions después del push autorizado.

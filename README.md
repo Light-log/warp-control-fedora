@@ -1,8 +1,8 @@
 # WARP Control
 
 Panel de escritorio GTK para Cloudflare WARP. Es un proyecto de portafolio con
-una base Python revisable, integración nativa de bandeja y paquetes para las
-familias RPM y Debian; Arch se entrega como PKGBUILD experimental.
+una base Python revisable, integración nativa de bandeja y entregas Linux como
+RPM, DEB, paquete de Arch y AppImage portátil.
 
 WARP Control no incluye Cloudflare WARP, no modifica repositorios durante la
 instalación del paquete y nunca instala software de terceros sin una
@@ -32,9 +32,19 @@ no son maquetas.
 
 ## Instalación
 
-Consulta [INSTALL.md](docs/INSTALL.md) para construir e instalar el artefacto
-correcto para Fedora/RHEL, Debian/Ubuntu o Arch. Consulta
-[SUPPORT.md](docs/SUPPORT.md) para la matriz de soporte de WARP y sus límites.
+Elige el artefacto de la [release](https://github.com/Light-log/warp-control-fedora/releases)
+que corresponda a tu sistema:
+
+| Formato | Cobertura publicada | Relación con Cloudflare WARP |
+| --- | --- | --- |
+| **RPM** | Fedora 43/44 y Enterprise Linux 9/10 | **Oficial**: puede usar el repositorio RPM de Cloudflare tras confirmación. |
+| **DEB** | Ubuntu 22.04/24.04/26.04 y Debian 12/13 | **Oficial**: puede usar el repositorio APT de Cloudflare tras confirmación. |
+| **Arch** | Arch Linux y derivadas | **Comunitario**: WARP se instala por separado; no se automatiza AUR. |
+| **AppImage** | Linux `x86_64` y `aarch64` | **Portátil**: amplía dónde se ejecuta el panel, no el soporte oficial de WARP. |
+
+Consulta [INSTALL.md](docs/INSTALL.md) para verificar e instalar cada artefacto
+y [SUPPORT.md](docs/SUPPORT.md) para distinguir la cobertura del panel de la
+matriz de soporte de Cloudflare WARP.
 
 Después de instalar un paquete, abre **WARP Control** desde el menú de
 aplicaciones o ejecuta:
