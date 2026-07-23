@@ -154,7 +154,7 @@ jobs:
       - name: Install RPM build requirements
         run: |
           dnf -y install rpm-build python3-devel pyproject-rpm-macros python3-pytest \
-            python3-setuptools python3-pip python3-packaging python3-gobject gtk3 \
+            python3-setuptools python3-wheel python3-pip python3-packaging python3-gobject gtk3 \
             python3-idna python3-pyyaml desktop-file-utils appstream
       - name: Build target-native RPM
         run: |
@@ -335,10 +335,12 @@ jobs:
         run: |
           su builder -c "cd '$BUILD_DIR' && makepkg --noconfirm"
           namcap "$BUILD_DIR"/warp-control-*.pkg.tar.*
+          mkdir -p dist/arch
+          cp "$BUILD_DIR"/warp-control-*.pkg.tar.* dist/arch/
       - uses: actions/upload-artifact@v4
         with:
           name: arch
-          path: build-arch.*/warp-control-*.pkg.tar.*
+          path: dist/arch/warp-control-*.pkg.tar.*
           if-no-files-found: error
 
   arch-install:

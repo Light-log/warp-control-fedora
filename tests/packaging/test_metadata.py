@@ -304,6 +304,16 @@ def test_workflow_does_not_reuse_a_fedora_rpm_on_el_targets() -> None:
     assert len({target["dist_tag"] for target in _matrix_includes(rpm_job)}) == 4
 
 
+def test_workflow_installs_the_wheel_backend_for_every_rpm_target() -> None:
+    rpm_job = _workflow_jobs()["rpm"]
+    requirement_steps = [
+        step for step in rpm_job["steps"] if step.get("name") == "Install RPM build requirements"
+    ]
+
+    assert len(requirement_steps) == 1
+    assert "python3-wheel" in requirement_steps[0]["run"]
+
+
 def test_workflow_installs_and_smoke_tests_every_built_rpm() -> None:
     jobs = _workflow_jobs()
     build_job = jobs["rpm"]
@@ -416,6 +426,18 @@ def test_workflow_arch_source_points_at_the_shared_local_tarball() -> None:
         "local tarball rather than downloading a GitHub release"
     )
     assert "releases/download" not in run_text.split("makepkg")[0] or "file://" in run_text
+
+
+def test_workflow_uploads_the_arch_package_at_the_artifact_root() -> None:
+    arch_job = _workflow_jobs()["arch"]
+    run_text = _all_step_runs(arch_job)
+    upload_steps = [
+        step for step in arch_job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")
+    ]
+
+    assert len(upload_steps) == 1
+    assert upload_steps[0]["with"]["path"] == "dist/arch/warp-control-*.pkg.tar.*"
+    assert 'cp "$BUILD_DIR"/warp-control-*.pkg.tar.* dist/arch/' in run_text
 
 
 def test_workflow_arch_installs_and_smoke_tests_the_built_package() -> None:
